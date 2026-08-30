@@ -1,0 +1,106 @@
+{% extends 'facturas/base.html' %}
+{% load facturas_extras %}
+{% block titulo %}Revisar factura{% endblock %}
+{% block contenido %}
+<div class="row justify-content-center">
+    <div class="col-md-7">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h4 class="card-title mb-3">
+                    Revisar factura
+                    {% if aceptada %}
+                        <span class="badge bg-success">Aceptada</span>
+                    {% else %}
+                        <span class="badge bg-secondary">Pendiente de aceptar</span>
+                    {% endif %}
+                    {% if liquidacion_activa %}
+                        <span class="badge bg-primary">Liquidada</span>
+                    {% endif %}
+                </h4>
+
+                {% if liquidacion_activa %}
+                <div class="alert alert-warning small">
+                    🔒 Esta factura ya forma parte de la
+                    <a href="{% url 'facturas:detalle_liquidacion' liquidacion_activa.numero %}">Liquidación #{{ liquidacion_activa.numero }}</a>
+                    y por eso está bloqueada: no se puede aceptar/quitar aceptación ni reemplazar su
+                    adjunto. Si necesitas corregir algo, primero anula esa liquidación (eso la libera).
+                </div>
+                {% endif %}
+
+                <table class="table table-sm">
+                    <tr><th style="width:220px">No. Factura</th><td>{{ factura.numfactura }}</td></tr>
+                    <tr><th>Tipo</th><td>{{ factura.tipofac }}</td></tr>
+                    <tr><th>Orden</th><td>{{ factura.orden }}</td></tr>
+                    <tr><th>Presupuesto</th><td>{{ factura.codpresup }}</td></tr>
+                    <tr><th>Cliente (código)</th><td>{{ factura.codcli }}</td></tr>
+                    <tr><th>Marca</th><td>{{ factura.codmar }}</td></tr>
+                    <tr><th>Producto</th><td>{{ factura.codprd }}</td></tr>
+                    <tr><th>Medio (proveedor)</th><td>{{ factura.codfacturar }}</td></tr>
+                    <tr><th>Fecha de factura</th><td>{{ factura.fecfactura }}</td></tr>
+                    <tr><th>Fecha de recepción</th><td>{{ factura.fecrecep }}</td></tr>
+                    <tr><th>Monto</th><td>Q {{ factura.totalfac|moneyfmt }}</td></tr>
+                    <tr><th>IVA</th><td>Q {{ factura.valiva|moneyfmt }}</td></tr>
+                    <tr><th>Otro impuesto (TP)</th><td>Q {{ factura.valtp|moneyfmt }}</td></tr>
+                    <tr><th>Observaciones</th><td>{{ factura.obsfactura|default:'—' }}</td></tr>
+                    <tr>
+                        <th>Adjunto</th>
+                        <td>
+                            {% if adjunto %}
+                                <a href="{{ adjunto.archivo.url }}" target="_blank">Ver archivo adjunto</a>
+                            {% else %}
+                                <span class="text-muted">Sin adjunto</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                </table>
+
+                <div class="alert alert-info small">
+                    "Aceptar" solo marca la factura como revisada dentro de este sistema.
+                    No genera ningún movimiento, póliza ni CXP en el sistema contable —
+                    eso sigue siendo un paso aparte, manual, en el sistema contable actual.
+                </div>
+
+                <form method="post">
+                    {% csrf_token %}
+                    {% if aceptada %}
+                        <button type="submit" name="accion" value="quitar" class="btn btn-outline-secondary w-100"
+                                {% if liquidacion_activa %}disabled{% endif %}>
+                            Quitar aceptación
+                        </button>
+                    {% else %}
+                        <button type="submit" name="accion" value="aceptar" class="btn btn-success w-100"
+                                {% if liquidacion_activa %}disabled{% endif %}>
+                            Aceptar factura
+                        </button>
+                    {% endif %}
+                </form>
+                <a href="{% url 'facturas:listado_facturas_recibidas' %}" class="btn btn-link mt-2">
+                    &larr; Volver al listado
+                </a>
+
+                {% if not liquidacion_activa %}
+                <hr>
+                <h6>¿Subieron el archivo equivocado?</h6>
+                <p class="text-muted small">
+                    Esto solo reemplaza el archivo adjunto — no cambia el monto, fecha ni número de
+                    factura. Se guarda como un adjunto nuevo (el anterior no se borra, queda en el
+                    historial).
+                </p>
+                <form method="post" enctype="multipart/form-data" class="d-flex gap-2 align-items-start">
+                    {% csrf_token %}
+                    <div class="flex-grow-1">
+                        {{ form_adjunto.archivo }}
+                        {% if form_adjunto.archivo.errors %}
+                            <div class="text-danger small">{{ form_adjunto.archivo.errors|striptags }}</div>
+                        {% endif %}
+                    </div>
+                    <button type="submit" name="accion" value="reemplazar_adjunto" class="btn btn-outline-warning">
+                        Reemplazar adjunto
+                    </button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

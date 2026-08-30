@@ -1,0 +1,95 @@
+{% extends 'portal/base_portal.html' %}
+{% load facturas_extras %}
+{% block titulo %}Mis órdenes - Portal de Proveedores{% endblock %}
+{% block contenido %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+        <h4 class="mb-1">Mis órdenes de compra</h4>
+        <p class="text-muted small mb-0">
+            Proveedor: <strong>{{ perfil.codfacturar }}</strong>
+            {% if perfil.nombre_proveedor %} ({{ perfil.nombre_proveedor }}){% endif %}
+        </p>
+    </div>
+    <a href="{% url 'portal:buscar_orden' %}" class="btn btn-outline-secondary btn-sm">
+        Prefiero buscar por número de orden &rarr;
+    </a>
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <form method="get" class="row gy-2 gx-3 align-items-end">
+            <div class="col-auto">
+                <label class="form-label small mb-1">Año de presupuesto</label>
+                <input type="number" name="anio" value="{{ anio }}" class="form-control form-control-sm"
+                       placeholder="{{ anio_actual }}" style="width:120px;">
+            </div>
+            <div class="col-auto">
+                <label class="form-label small mb-1">No. de orden</label>
+                <input type="text" name="orden" value="{{ orden_filtro }}" class="form-control form-control-sm"
+                       placeholder="Ej. 2020115636">
+            </div>
+            <div class="col-auto">
+                <div class="form-check">
+                    <input type="checkbox" name="todas" value="1" id="chkTodas" class="form-check-input"
+                           {% if ver_todas %}checked{% endif %}>
+                    <label class="form-check-label small" for="chkTodas">
+                        Ver también las ya facturadas
+                    </label>
+                </div>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-primary btn-sm">Filtrar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if ordenes %}
+<div class="table-responsive">
+    <table class="table table-striped table-bordered bg-white align-middle">
+        <thead class="table-dark">
+            <tr>
+                <th>Orden</th>
+                <th>Presupuesto</th>
+                <th>Cliente</th>
+                <th>Marca</th>
+                <th class="text-end">Total orden</th>
+                <th class="text-end">Facturado</th>
+                <th class="text-end">Saldo disponible</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for o in ordenes %}
+            <tr>
+                <td>{{ o.orden }}</td>
+                <td>{{ o.codpresup }}</td>
+                <td>{{ o.codcli|default:'-' }}</td>
+                <td>{{ o.codmar|default:'-' }}</td>
+                <td class="text-end">Q {{ o.saldo.total_orden|moneyfmt }}</td>
+                <td class="text-end">Q {{ o.saldo.total_facturado|moneyfmt }}</td>
+                <td class="text-end {% if o.saldo.saldo_disponible <= 0 %}text-danger{% else %}text-success{% endif %}">
+                    <strong>Q {{ o.saldo.saldo_disponible|moneyfmt }}</strong>
+                </td>
+                <td class="text-end">
+                    {% if o.saldo.saldo_disponible > 0 %}
+                    <a href="{% url 'portal:seleccionar_orden' o.orden %}" class="btn btn-success btn-sm">
+                        Subir factura
+                    </a>
+                    {% else %}
+                    <span class="badge bg-secondary">Facturada</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="alert alert-info">
+    No se encontraron órdenes
+    {% if not ver_todas %}con saldo pendiente de facturar{% endif %}
+    para los filtros indicados.
+</div>
+{% endif %}
+{% endblock %}

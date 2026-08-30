@@ -1,0 +1,44 @@
+{% extends 'facturas/base.html' %}
+{% load facturas_extras %}
+{% block titulo %}Anular liquidación{% endblock %}
+{% block contenido %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card shadow-sm border-danger">
+            <div class="card-body">
+                <h4 class="card-title text-danger mb-3">⚠️ Anular liquidación #{{ liquidacion.numero }}</h4>
+
+                <table class="table table-sm">
+                    <tr><th style="width:180px">Agrupado por</th><td>{{ liquidacion.get_criterio_display }}</td></tr>
+                    <tr><th>Valor</th><td>{{ liquidacion.valor_agrupador }}</td></tr>
+                    <tr><th>Facturas incluidas</th><td>{{ liquidacion.detalles.count }}</td></tr>
+                    <tr><th>Total</th><td>Q {{ liquidacion.total|moneyfmt }}</td></tr>
+                </table>
+
+                <div class="alert alert-warning small">
+                    Esto <strong>no borra</strong> la liquidación: la marca como anulada (queda
+                    guardado quién, cuándo y por qué). Sus facturas quedarán <strong>disponibles de
+                    nuevo</strong> en "Liquidar clientes" para incluirse en una liquidación nueva.
+                </div>
+
+                <form method="post" novalidate>
+                    {% csrf_token %}
+                    {% for field in form %}
+                        <div class="mb-3">
+                            <label class="form-label">{{ field.label }}</label>
+                            {{ field }}
+                            {% if field.errors %}
+                                <div class="text-danger small">{{ field.errors|striptags }}</div>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                    <button type="submit" class="btn btn-danger w-100">Confirmar anulación</button>
+                </form>
+                <a href="{% url 'facturas:detalle_liquidacion' liquidacion.numero %}" class="btn btn-link mt-2">
+                    Cancelar
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

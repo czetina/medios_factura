@@ -1,0 +1,93 @@
+{% extends 'facturas/base.html' %}
+{% load facturas_extras %}
+{% block titulo %}Facturas recibidas{% endblock %}
+{% block contenido %}
+<h4 class="mb-3">Facturas recibidas por mes / año</h4>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <form method="get" class="row g-3 align-items-end">
+            {% for field in form %}
+                <div class="col-auto">
+                    <label class="form-label">{{ field.label }}</label>
+                    {{ field }}
+                </div>
+            {% endfor %}
+            <div class="col-auto">
+                <button type="submit" class="btn btn-primary">Filtrar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if filtrado %}
+    {% if filas %}
+    <div class="table-responsive">
+        <table class="table table-striped table-bordered bg-white align-middle">
+            <thead class="table-dark">
+                <tr>
+                    <th>Fecha recepción</th>
+                    <th>Orden</th>
+                    <th>Presupuesto</th>
+                    <th>Cliente</th>
+                    <th>No. Factura</th>
+                    <th>Tipo</th>
+                    <th>Fecha factura</th>
+                    <th class="text-end">Monto</th>
+                    <th>Observaciones</th>
+                    <th>Aceptación</th>
+                    <th>Acciones</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for f in filas %}
+                <tr class="{% if f.tipofac == 'NC' %}table-warning{% endif %}">
+                    <td>{{ f.fecrecep }}</td>
+                    <td>{{ f.orden }}</td>
+                    <td>{{ f.codpresup }}</td>
+                    <td>{{ f.codcli }}</td>
+                    <td>{{ f.numfactura }}</td>
+                    <td>{{ f.tipofac }}</td>
+                    <td>{{ f.fecfactura }}</td>
+                    <td class="text-end">
+                        {% if f.tipofac == 'NC' %}-{% endif %}Q {{ f.totalfac|moneyfmt }}
+                    </td>
+                    <td>{{ f.obsfactura|default:'' }}</td>
+                    <td>
+                        {% if f.codificado %}
+                            <span class="badge bg-success">Aceptada</span>
+                        {% else %}
+                            <span class="badge bg-secondary">Pendiente</span>
+                        {% endif %}
+                        {% if f.liquidada %}
+                            <span class="badge bg-primary">Liquidada</span>
+                        {% endif %}
+                    </td>
+                    <td class="d-flex gap-1">
+                        <a href="{% url 'facturas:revisar_factura' f.keyorden %}" class="btn btn-outline-primary btn-sm">
+                            Revisar
+                        </a>
+                        <a href="{% url 'facturas:anular_factura' f.keyorden %}" class="btn btn-outline-danger btn-sm">
+                            Anular
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr class="table-secondary fw-bold">
+                    <td colspan="7" class="text-end">Total del período:</td>
+                    <td class="text-end">Q {{ total_general|moneyfmt }}</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+    <p class="text-muted small">{{ filas|length }} factura(s) encontrada(s).</p>
+    {% else %}
+    <div class="alert alert-info">No se encontraron facturas para el período seleccionado.</div>
+    {% endif %}
+{% endif %}
+{% endblock %}

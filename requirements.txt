@@ -1,0 +1,4 @@
+Django>=4.2,<5.0
+mysqlclient>=2.2
+pypdf>=6.0          # fusionar los PDFs de una liquidación en un solo documento
+reportlab>=5.0       # generar la portada "Detalle" de la liquidación

@@ -1,0 +1,532 @@
+import datetime
+from decimal import Decimal
+
+from django.conf import settings
+from django.contrib import messages
+from django.http import HttpResponse
+from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse
+
+from .forms import (
+    BuscarOrdenForm, FacturaProveedorForm, FiltroFacturasRecibidasForm,
+    MotivoAnulacionForm, FiltroLiquidacionForm, ReemplazarAdjuntoForm,
+)
+from .models import OrdenesRd, FacturaAdjunto, Liquidacion
+from . import services
+
+SESSION_RESULTADOS = 'facturas_resultados_busqueda'
+SESSION_ORDEN_SEL = 'facturas_orden_seleccionada'
+
+
+# ---------------------------------------------------------------------------
+# Helpers de (de)serialización para poder guardar los resultados en sesión
+# (Decimal / date no son JSON-serializables por defecto).
+# ---------------------------------------------------------------------------
+
+def _serializar(valor):
+    if isinstance(valor, Decimal):
+        return {'__decimal__': str(valor)}
+    if isinstance(valor, (datetime.date, datetime.datetime)):
+        return {'__date__': valor.isoformat()}
+    return valor
+
+
+def _deserializar(valor):
+    if isinstance(valor, dict):
+        if '__decimal__' in valor:
+            return Decimal(valor['__decimal__'])
+        if '__date__' in valor:
+            return datetime.date.fromisoformat(valor['__date__'])
+    return valor
+
+
+def _dict_a_sesion(d: dict) -> dict:
+    return {k: _serializar(v) for k, v in d.items()}
+
+
+def _dict_de_sesion(d: dict) -> dict:
+    return {k: _deserializar(v) for k, v in d.items()}
+
+
+# ---------------------------------------------------------------------------
+# Paso 1: buscar la orden de compra
+# ---------------------------------------------------------------------------
+
+def buscar_orden(request):
+    if request.method == 'POST':
+        form = BuscarOrdenForm(request.POST)
+        if form.is_valid():
+            orden_ingresada = form.cleaned_data['orden'].strip()
+            # País y agencia YA NO se piden en pantalla: se toman fijos
+            # de config.py.
+            codpai = settings.FACTURAS_CODPAI_DEFAULT
+            codagencia = settings.FACTURAS_CODAGENCIA_DEFAULT
+
+            resultados = services.buscar_ordenes(orden_ingresada, codpai, codagencia)
+
+            if not resultados:
+                messages.error(
+                    request,
+                    f'No se encontró ninguna orden de compra "{orden_ingresada}" '
+                    f'vigente para facturar (país={codpai}, agencia={codagencia}).'
+                )
+                return render(request, 'facturas/buscar_orden.html', {
+                    'form': form,
+                    'codpai_actual': codpai,
+                    'codagencia_actual': codagencia,
+                })
+
+            if len(resultados) == 1:
+                request.session[SESSION_ORDEN_SEL] = _dict_a_sesion(resultados[0])
+                return redirect('facturas:ingresar_factura')
+
+            # Varias coincidencias -> el usuario debe elegir presupuesto/cliente
+            request.session[SESSION_RESULTADOS] = [_dict_a_sesion(r) for r in resultados]
+            return redirect('facturas:seleccionar_orden')
+    else:
+        form = BuscarOrdenForm()
+
+    return render(request, 'facturas/buscar_orden.html', {
+        'form': form,
+        'codpai_actual': settings.FACTURAS_CODPAI_DEFAULT,
+        'codagencia_actual': settings.FACTURAS_CODAGENCIA_DEFAULT,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Paso 2 (opcional): elegir presupuesto/cliente cuando hay varias coincidencias
+# ---------------------------------------------------------------------------
+
+def seleccionar_orden(request):
+    resultados_sesion = request.session.get(SESSION_RESULTADOS)
+    if not resultados_sesion:
+        messages.warning(request, 'Primero busca una orden de compra.')
+        return redirect('facturas:buscar_orden')
+
+    resultados = [_dict_de_sesion(r) for r in resultados_sesion]
+
+    if request.method == 'POST':
+        try:
+            idx = int(request.POST.get('idx'))
+            seleccionada = resultados[idx]
+        except (TypeError, ValueError, IndexError):
+            messages.error(request, 'Selección inválida.')
+            return redirect('facturas:seleccionar_orden')
+
+        request.session[SESSION_ORDEN_SEL] = resultados_sesion[idx]
+        del request.session[SESSION_RESULTADOS]
+        return redirect('facturas:ingresar_factura')
+
+    return render(request, 'facturas/seleccionar_orden.html', {
+        'resultados': list(enumerate(resultados)),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Paso 3: capturar datos de la factura + validar saldo + guardar
+# ---------------------------------------------------------------------------
+
+def ingresar_factura(request):
+    orden_sesion = request.session.get(SESSION_ORDEN_SEL)
+    if not orden_sesion:
+        messages.warning(request, 'Primero busca y selecciona una orden de compra.')
+        return redirect('facturas:buscar_orden')
+
+    orden_dict = _dict_de_sesion(orden_sesion)
+    saldo = services.calcular_saldo_orden(orden_dict)
+
+    if request.method == 'POST':
+        form = FacturaProveedorForm(request.POST, request.FILES)
+        if form.is_valid():
+            monto = form.cleaned_data['monto']
+            numfactura = form.cleaned_data['numfactura']
+
+            # --- Regla de negocio: no exceder el total de la orden ---
+            if monto > saldo.saldo_disponible:
+                messages.error(
+                    request,
+                    f'El monto ingresado (Q{monto:,.2f}) excede el saldo disponible de '
+                    f'la orden (Q{saldo.saldo_disponible:,.2f}). Total de la orden: '
+                    f'Q{saldo.total_orden:,.2f}, ya facturado: Q{saldo.total_facturado:,.2f}.'
+                )
+                return render(request, 'facturas/ingresar_factura.html', {
+                    'form': form, 'orden': orden_dict, 'saldo': saldo,
+                })
+
+            # --- Regla de negocio: no repetir no. de factura por proveedor ---
+            if services.numfactura_ya_registrada(
+                orden_dict['codpai'], orden_dict['codagencia'],
+                orden_dict.get('codfacturar'), numfactura,
+            ):
+                proveedor = orden_dict.get('rsfacturar') or orden_dict.get('codfacturar') or ''
+                messages.error(
+                    request,
+                    f'Ya existe una factura activa con el número "{numfactura}" '
+                    f'para el proveedor {proveedor}. Verifica el número o revisa '
+                    f'si ya fue registrada anteriormente.'
+                )
+                return render(request, 'facturas/ingresar_factura.html', {
+                    'form': form, 'orden': orden_dict, 'saldo': saldo,
+                })
+
+            usuario = request.user.username if request.user.is_authenticated else 'anonimo'
+
+            nueva_factura = services.registrar_factura(
+                orden_dict=orden_dict,
+                numfactura=numfactura,
+                fecfactura=form.cleaned_data['fecfactura'],
+                monto=monto,
+                valiva=form.cleaned_data.get('valiva'),
+                valtp=form.cleaned_data.get('valtp'),
+                tipofac=form.cleaned_data['tipofac'],
+                obsfactura=form.cleaned_data.get('obsfactura', ''),
+                archivo=form.cleaned_data.get('archivo'),
+                usuario=usuario,
+            )
+
+            del request.session[SESSION_ORDEN_SEL]
+            messages.success(
+                request,
+                f'Factura {nueva_factura.numfactura} registrada correctamente '
+                f'contra la orden {nueva_factura.orden} (keyorden={nueva_factura.keyorden}).'
+            )
+            return redirect(reverse('facturas:confirmacion') + f'?keyorden={nueva_factura.keyorden}')
+    else:
+        form = FacturaProveedorForm()
+
+    return render(request, 'facturas/ingresar_factura.html', {
+        'form': form, 'orden': orden_dict, 'saldo': saldo,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Paso 4: confirmación
+# ---------------------------------------------------------------------------
+
+def confirmacion(request):
+    keyorden = request.GET.get('keyorden')
+    factura = None
+    if keyorden:
+        factura = OrdenesRd.objects.using('default').filter(keyorden=keyorden).first()
+    return render(request, 'facturas/confirmacion.html', {'factura': factura})
+
+
+# ---------------------------------------------------------------------------
+# Paso 5: listado de facturas recibidas por mes/año
+# ---------------------------------------------------------------------------
+
+def listado_facturas_recibidas(request):
+    form = FiltroFacturasRecibidasForm(request.GET or None)
+
+    filas = []
+    total_general = Decimal('0.00')
+    filtrado = False
+
+    if form.is_valid():
+        anio = int(form.cleaned_data['anio'])
+        mes = form.cleaned_data.get('mes')
+        mes = int(mes) if mes else None
+
+        filas, total_general = services.listar_facturas_recibidas(
+            anio=anio,
+            mes=mes,
+            codpai=settings.FACTURAS_CODPAI_DEFAULT,
+            codagencia=settings.FACTURAS_CODAGENCIA_DEFAULT,
+            codcli=form.cleaned_data.get('codcli'),
+            codpresup=form.cleaned_data.get('codpresup'),
+            estado_codificacion=form.cleaned_data.get('estado_codificacion'),
+        )
+        filtrado = True
+
+    return render(request, 'facturas/listado_facturas.html', {
+        'form': form,
+        'filas': filas,
+        'total_general': total_general,
+        'filtrado': filtrado,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Paso 6: anular una factura ya registrada
+# ---------------------------------------------------------------------------
+
+def anular_factura(request, keyorden):
+    factura = get_object_or_404(OrdenesRd.objects.using('default'), keyorden=keyorden)
+
+    if factura.facanula == 'Si':
+        messages.info(request, f'La factura {factura.numfactura} ya estaba anulada.')
+        return redirect('facturas:listado_facturas_recibidas')
+
+    # Igual que en "Revisar factura": si ya está en una liquidación
+    # activa, anularla dejaría el total de esa liquidación
+    # desactualizado (la factura desaparecería del saldo pero la
+    # liquidación seguiría "cobrando" su monto) -- hay que anular esa
+    # liquidación primero (lo que la libera).
+    liquidacion_activa = services.liquidacion_activa_de(keyorden)
+
+    if request.method == 'POST' and liquidacion_activa:
+        messages.error(
+            request,
+            f'La factura {factura.numfactura} ya forma parte de la Liquidación #{liquidacion_activa.numero} '
+            f'y no se puede anular. Anula esa liquidación primero si necesitas hacerlo.'
+        )
+        return redirect('facturas:anular_factura', keyorden=keyorden)
+
+    if request.method == 'POST':
+        form = MotivoAnulacionForm(request.POST)
+        if form.is_valid():
+            usuario = request.user.username if request.user.is_authenticated else 'anonimo'
+            try:
+                services.anular_factura(
+                    keyorden=keyorden,
+                    motivo=form.cleaned_data['motivo'],
+                    usuario=usuario,
+                )
+            except services.FacturaYaAnuladaError as exc:
+                messages.warning(request, str(exc))
+            else:
+                messages.success(
+                    request,
+                    f'Factura {factura.numfactura} (orden {factura.orden}) anulada correctamente.'
+                )
+            return redirect('facturas:listado_facturas_recibidas')
+    else:
+        form = MotivoAnulacionForm()
+
+    return render(request, 'facturas/anular_factura.html', {
+        'form': form,
+        'factura': factura,
+        'liquidacion_activa': liquidacion_activa,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Paso 7: revisar y aceptar la factura (antes de que "se envíe a CXP" en
+# el sistema contable real -- aquí solo se marca el estado, sin generar
+# ningún movimiento contable de verdad).
+# ---------------------------------------------------------------------------
+
+def revisar_factura(request, keyorden):
+    """Pantalla de revisión: muestra todos los datos capturados de la
+    factura (y su adjunto, si tiene) para que quien revise confirme que
+    están correctos antes de "Aceptar". Aceptar/Quitar aceptación es
+    idempotente y no dispara ningún proceso contable -- es solo un
+    estado de control dentro de este sistema.
+
+    Si la factura ya forma parte de una liquidación ACTIVA (no
+    anulada), queda "congelada" aquí: no se puede aceptar/quitar
+    aceptación ni reemplazar su adjunto, porque eso dejaría el PDF ya
+    armado de esa liquidación desincronizado de lo que el sistema
+    muestra. Para volver a tocarla hay que anular esa liquidación
+    primero (lo que la libera)."""
+    factura = get_object_or_404(OrdenesRd.objects.using('default'), keyorden=keyorden)
+    aceptada = services.esta_codificada(keyorden)
+    adjunto = FacturaAdjunto.objects.filter(keyorden=keyorden).order_by('-fecha_carga').first()
+    form_adjunto = ReemplazarAdjuntoForm()
+    liquidacion_activa = services.liquidacion_activa_de(keyorden)
+
+    if request.method == 'POST' and liquidacion_activa:
+        messages.error(
+            request,
+            f'Esta factura ya forma parte de la Liquidación #{liquidacion_activa.numero} '
+            f'y no se puede modificar. Anula esa liquidación primero si necesitas cambiarla.'
+        )
+        return redirect('facturas:revisar_factura', keyorden=keyorden)
+
+    if request.method == 'POST':
+        accion = request.POST.get('accion')
+        usuario = request.user.username if request.user.is_authenticated else 'anonimo'
+
+        if accion == 'aceptar' and not aceptada:
+            services.marcar_codificada(keyorden, factura.orden, factura.numfactura, usuario)
+            messages.success(request, f'Factura {factura.numfactura} aceptada.')
+            return redirect('facturas:listado_facturas_recibidas')
+        elif accion == 'quitar' and aceptada:
+            services.quitar_codificacion(keyorden)
+            messages.info(request, f'Se quitó la aceptación de la factura {factura.numfactura}.')
+            return redirect('facturas:listado_facturas_recibidas')
+        elif accion == 'reemplazar_adjunto':
+            # El usuario subió el archivo equivocado: se agrega uno
+            # nuevo (no se toca monto/fecha/número -- eso se corrige
+            # anulando la factura y registrando una nueva).
+            form_adjunto = ReemplazarAdjuntoForm(request.POST, request.FILES)
+            if form_adjunto.is_valid():
+                services.reemplazar_adjunto_factura(
+                    keyorden=keyorden,
+                    archivo=form_adjunto.cleaned_data['archivo'],
+                    usuario=usuario,
+                )
+                messages.success(request, 'Adjunto reemplazado correctamente.')
+                return redirect('facturas:revisar_factura', keyorden=keyorden)
+            # si el form no es válido, sigue abajo y lo vuelve a mostrar con errores
+
+    return render(request, 'facturas/revisar_factura.html', {
+        'factura': factura,
+        'aceptada': aceptada,
+        'adjunto': adjunto,
+        'form_adjunto': form_adjunto,
+        'liquidacion_activa': liquidacion_activa,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Paso 8: liquidar clientes -- agrupar facturas ACEPTADAS y guardarlas
+# como una Liquidacion propia (sin tocar liq_quedan/liq_liquidaciones
+# reales del sistema contable).
+# ---------------------------------------------------------------------------
+
+def liquidar_clientes(request):
+    form = FiltroLiquidacionForm(request.GET or None)
+    grupos = []
+    filtrado = False
+
+    if form.is_valid():
+        anio = int(form.cleaned_data['anio'])
+        mes = form.cleaned_data.get('mes')
+        mes = int(mes) if mes else None
+        criterio = form.cleaned_data['criterio']
+
+        grupos = services.facturas_aceptadas_por_liquidar(
+            anio=anio,
+            mes=mes,
+            codpai=settings.FACTURAS_CODPAI_DEFAULT,
+            codagencia=settings.FACTURAS_CODAGENCIA_DEFAULT,
+            criterio=criterio,
+            codcli=form.cleaned_data.get('codcli'),
+            codpresup=form.cleaned_data.get('codpresup'),
+        )
+        filtrado = True
+
+    return render(request, 'facturas/liquidar_clientes.html', {
+        'form': form,
+        'grupos': grupos,
+        'filtrado': filtrado,
+    })
+
+
+def guardar_liquidacion(request):
+    """Solo POST -- guarda como Liquidacion el grupo indicado, volviendo
+    a calcular sus facturas en el servidor (no confía en lo enviado por
+    el navegador más que el criterio/valor/filtros usados)."""
+    if request.method != 'POST':
+        return redirect('facturas:liquidar_clientes')
+
+    criterio = request.POST.get('criterio', '')
+    valor = request.POST.get('valor', '')
+    anio = request.POST.get('anio', '')
+    mes = request.POST.get('mes') or None
+    codcli = request.POST.get('codcli') or None
+    codpresup = request.POST.get('codpresup') or None
+    usuario = request.user.username if request.user.is_authenticated else 'anonimo'
+
+    try:
+        liquidacion = services.guardar_liquidacion(
+            criterio=criterio,
+            valor=valor,
+            anio=int(anio),
+            mes=int(mes) if mes else None,
+            codpai=settings.FACTURAS_CODPAI_DEFAULT,
+            codagencia=settings.FACTURAS_CODAGENCIA_DEFAULT,
+            usuario=usuario,
+            codcli=codcli,
+            codpresup=codpresup,
+        )
+    except (services.NadaQueLiquidarError, ValueError) as exc:
+        messages.error(request, str(exc))
+    else:
+        cantidad = liquidacion.detalles.count()
+        messages.success(
+            request,
+            f'Liquidación #{liquidacion.numero} guardada: {cantidad} factura(s), '
+            f'total Q{liquidacion.total:,.2f}.'
+        )
+
+    # Volver a la pantalla de liquidar, con los mismos filtros que traía.
+    query = f'?anio={anio}&criterio={criterio}'
+    if mes:
+        query += f'&mes={mes}'
+    if codcli:
+        query += f'&codcli={codcli}'
+    if codpresup:
+        query += f'&codpresup={codpresup}'
+    return redirect(reverse('facturas:liquidar_clientes') + query)
+
+
+def listado_liquidaciones(request):
+    liquidaciones = Liquidacion.objects.filter(
+        codpai=settings.FACTURAS_CODPAI_DEFAULT,
+        codagencia=settings.FACTURAS_CODAGENCIA_DEFAULT,
+    ).order_by('-fecha_liquidacion')
+    return render(request, 'facturas/listado_liquidaciones.html', {
+        'liquidaciones': liquidaciones,
+    })
+
+
+def detalle_liquidacion(request, numero):
+    liquidacion = get_object_or_404(Liquidacion, numero=numero)
+    # Recoge lo que haya en media/OrdenesPdf/ y media/presupuestos/ (las
+    # carpetas "parametrizadas" mientras no se conecta Drive/OneDrive)
+    # antes de armar el índice, para que un PDF recién dejado ahí
+    # aparezca sin tener que subirlo aparte por /admin/.
+    services.sincronizar_adjuntos_desde_carpetas()
+    indice = services.armar_indice_liquidacion(liquidacion)
+    return render(request, 'facturas/detalle_liquidacion.html', {
+        'liquidacion': liquidacion,
+        'indice': indice,
+    })
+
+
+def anular_liquidacion(request, numero):
+    """Anula la liquidación (no la borra) y con eso libera sus facturas
+    para que vuelvan a estar disponibles en 'Liquidar clientes'."""
+    liquidacion = get_object_or_404(Liquidacion, numero=numero)
+
+    if liquidacion.anulada:
+        messages.info(request, f'La liquidación #{numero} ya estaba anulada.')
+        return redirect('facturas:detalle_liquidacion', numero=numero)
+
+    if request.method == 'POST':
+        form = MotivoAnulacionForm(request.POST)
+        if form.is_valid():
+            usuario = request.user.username if request.user.is_authenticated else 'anonimo'
+            try:
+                services.anular_liquidacion(
+                    numero=numero,
+                    motivo=form.cleaned_data['motivo'],
+                    usuario=usuario,
+                )
+            except services.LiquidacionYaAnuladaError as exc:
+                messages.warning(request, str(exc))
+            else:
+                messages.success(
+                    request,
+                    f'Liquidación #{numero} anulada. Sus {liquidacion.detalles.count()} factura(s) '
+                    f'quedaron disponibles de nuevo para liquidar.'
+                )
+            return redirect('facturas:detalle_liquidacion', numero=numero)
+    else:
+        form = MotivoAnulacionForm()
+
+    return render(request, 'facturas/anular_liquidacion.html', {
+        'form': form,
+        'liquidacion': liquidacion,
+    })
+
+
+def descargar_pdf_liquidacion(request, numero):
+    """Genera (al vuelo, no se guarda) el PDF final de la liquidación:
+    portada "Detalle" + factura/presupuesto/orden de compra de cada
+    fila, en el mismo orden que arman a mano hoy. Si falta algún
+    adjunto (presupuesto/orden de compra todavía no subidos), el PDF
+    se genera igual mostrando un mensaje con lo que quedó fuera."""
+    services.sincronizar_adjuntos_desde_carpetas()
+    liquidacion = get_object_or_404(Liquidacion, numero=numero)
+    # Las advertencias (adjuntos faltantes) no se muestran aquí con
+    # `messages` porque esta vista devuelve el PDF directo, no una
+    # página -- ya se ven de antemano en detalle_liquidacion.html
+    # (columna de estado por fila), antes de descargar.
+    pdf_bytes, _advertencias = services.generar_pdf_liquidacion(liquidacion)
+
+    response = HttpResponse(pdf_bytes, content_type='application/pdf')
+    response['Content-Disposition'] = f'inline; filename="Liquidacion_{liquidacion.numero}.pdf"'
+    return response

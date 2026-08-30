@@ -1,0 +1,28 @@
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Configuración con credenciales reales (ver config.example.py)
+config.py
+
+# Archivos subidos por usuarios (facturas, presupuestos, órdenes de compra)
+media/
+
+# Bases de datos locales / logs
+db.sqlite3
+*.log
+
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Django
+staticfiles/

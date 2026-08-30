@@ -1,0 +1,63 @@
+{% extends 'portal/base_portal.html' %}
+{% load facturas_extras %}
+{% block titulo %}Ingresar factura - Portal de Proveedores{% endblock %}
+{% block contenido %}
+<div class="row">
+    <div class="col-md-5">
+        <div class="card shadow-sm mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Orden de compra</h5>
+                <table class="table table-sm">
+                    <tr><th>Orden</th><td>{{ orden.orden }}</td></tr>
+                    <tr><th>Presupuesto</th><td>{{ orden.codpresup }}</td></tr>
+                    <tr><th>Cliente</th><td>{{ orden.nomcli }}</td></tr>
+                    <tr><th>Concepto</th><td>{{ orden.DesConcepto }}</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title">Saldo de la orden</h5>
+                <table class="table table-sm">
+                    <tr><th>Total de la orden</th><td class="text-end">Q {{ saldo.total_orden|moneyfmt }}</td></tr>
+                    <tr><th>Ya facturado</th><td class="text-end">Q {{ saldo.total_facturado|moneyfmt }}</td></tr>
+                    <tr class="table-{% if saldo.saldo_disponible <= 0 %}danger{% else %}success{% endif %}">
+                        <th>Saldo disponible</th>
+                        <td class="text-end"><strong>Q {{ saldo.saldo_disponible|moneyfmt }}</strong></td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-7">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h4 class="card-title mb-3">Datos de tu factura</h4>
+                <div class="alert alert-info small">
+                    Solo captura el <strong>monto total</strong> de tu factura. El IVA y otros
+                    impuestos se calculan automáticamente según la orden de compra.
+                </div>
+                <form method="post" enctype="multipart/form-data" novalidate>
+                    {% csrf_token %}
+                    {% for field in form %}
+                        <div class="mb-3">
+                            <label class="form-label">{{ field.label }}</label>
+                            {{ field }}
+                            {% if field.help_text %}
+                                <div class="form-text">{{ field.help_text }}</div>
+                            {% endif %}
+                            {% if field.errors %}
+                                <div class="text-danger small">{{ field.errors|striptags }}</div>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                    <button type="submit" class="btn btn-success w-100">Enviar factura</button>
+                </form>
+            </div>
+        </div>
+        <a href="{% url 'portal:buscar_orden' %}" class="btn btn-link mt-2">&larr; Buscar otra orden</a>
+    </div>
+</div>
+{% endblock %}

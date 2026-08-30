@@ -1,0 +1,93 @@
+{% extends 'facturas/base.html' %}
+{% load facturas_extras %}
+{% block titulo %}Liquidación #{{ liquidacion.numero }}{% endblock %}
+{% block contenido %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <h4 class="mb-0">
+        Liquidación #{{ liquidacion.numero }}
+        {% if liquidacion.anulada %}<span class="badge bg-secondary">Anulada</span>{% endif %}
+    </h4>
+    <div class="d-flex gap-2">
+        <a href="{% url 'facturas:descargar_pdf_liquidacion' liquidacion.numero %}"
+           class="btn btn-success" target="_blank">
+            📄 Descargar PDF de liquidación
+        </a>
+        {% if not liquidacion.anulada %}
+        <a href="{% url 'facturas:anular_liquidacion' liquidacion.numero %}" class="btn btn-outline-danger">
+            Anular liquidación
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+{% if liquidacion.anulada %}
+<div class="alert alert-secondary small">
+    Esta liquidación fue <strong>anulada</strong> el {{ liquidacion.fecha_anula|date:'d/m/Y H:i' }}
+    por {{ liquidacion.usuario_anula|default:'—' }}. Motivo: {{ liquidacion.motivo_anula }}<br>
+    Sus facturas ya están disponibles de nuevo en "Liquidar clientes".
+</div>
+{% endif %}
+
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <table class="table table-sm mb-0">
+            <tr><th style="width:220px">Agrupado por</th><td>{{ liquidacion.get_criterio_display }}</td></tr>
+            <tr><th>Valor</th><td>{{ liquidacion.valor_agrupador }}</td></tr>
+            <tr><th>Fecha</th><td>{{ liquidacion.fecha_liquidacion|date:'d/m/Y H:i' }}</td></tr>
+            <tr><th>Usuario</th><td>{{ liquidacion.usuario|default:'' }}</td></tr>
+            <tr><th>Total</th><td><strong>Q {{ liquidacion.total|moneyfmt }}</strong></td></tr>
+        </table>
+    </div>
+</div>
+
+<div class="alert alert-info small">
+    El PDF se arma automáticamente: portada (este índice) + Factura + Presupuesto + Orden de compra
+    de cada fila, en ese orden. Si a una fila le falta Presupuesto y/o Orden de compra: deja el PDF
+    en <code>media/presupuestos/&lt;codigo_presupuesto&gt;.pdf</code> o
+    <code>media/OrdenesPdf/&lt;numero_de_orden&gt;.pdf</code> y recarga esta página — el sistema los
+    detecta solo. También puedes subirlos manualmente desde
+    <a href="/admin/facturas/presupuestoadjunto/add/" target="_blank">/admin/</a> (Presupuestos) o
+    <a href="/admin/facturas/ordencompraadjunto/add/" target="_blank">/admin/</a> (Órdenes de compra).
+</div>
+
+<div class="table-responsive">
+    <table class="table table-striped table-bordered bg-white align-middle">
+        <thead class="table-dark">
+            <tr>
+                <th>#</th>
+                <th>Tipo de medio</th>
+                <th>Razón social</th>
+                <th>Cliente</th>
+                <th>Orden</th>
+                <th>Presupuesto</th>
+                <th>No. Factura</th>
+                <th class="text-end">Monto</th>
+                <th>Documentos</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for f in indice %}
+            <tr class="{% if f.monto < 0 %}table-warning{% endif %}">
+                <td>{{ f.numero }}</td>
+                <td>{{ f.tipo_medio|default:'-' }}</td>
+                <td>{{ f.razon_social|default:'-' }}</td>
+                <td>{{ f.cliente|default:'-' }}</td>
+                <td>{{ f.orden }}</td>
+                <td>{{ f.codpresup|default:'-' }}</td>
+                <td>{{ f.numfactura }}</td>
+                <td class="text-end">Q {{ f.monto|moneyfmt }}</td>
+                <td>
+                    <span class="badge {% if f.factura_adjunto %}bg-success{% else %}bg-secondary{% endif %}">Factura</span>
+                    <span class="badge {% if f.presupuesto_adjunto %}bg-success{% else %}bg-danger{% endif %}">Presupuesto</span>
+                    <span class="badge {% if f.ordencompra_adjunto %}bg-success{% else %}bg-danger{% endif %}">Orden</span>
+                </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="9" class="text-center text-muted">Esta liquidación no tiene facturas.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<a href="{% url 'facturas:listado_liquidaciones' %}" class="btn btn-link">&larr; Volver al listado</a>
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends 'facturas/base.html' %}
+{% load facturas_extras %}
+{% block titulo %}Seleccionar orden{% endblock %}
+{% block contenido %}
+<h4 class="mb-3">2. Se encontró más de una coincidencia — elige el presupuesto / cliente correcto</h4>
+
+<form method="post">
+    {% csrf_token %}
+    <div class="table-responsive">
+        <table class="table table-hover table-bordered bg-white align-middle">
+            <thead class="table-dark">
+                <tr>
+                    <th></th>
+                    <th>Orden</th>
+                    <th>Presupuesto</th>
+                    <th>Cliente</th>
+                    <th>Medio</th>
+                    <th>Concepto</th>
+                    <th>Total orden</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for idx, fila in resultados %}
+                <tr>
+                    <td>
+                        <input class="form-check-input" type="radio" name="idx" value="{{ idx }}" required
+                               {% if forloop.first %}checked{% endif %}>
+                    </td>
+                    <td>{{ fila.orden }}</td>
+                    <td>{{ fila.codpresup }}</td>
+                    <td>{{ fila.nomcli }}</td>
+                    <td>{{ fila.rsfacturar }}</td>
+                    <td>{{ fila.DesConcepto }}</td>
+                    <td class="text-end">Q {{ fila.totalorden|moneyfmt }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <button type="submit" class="btn btn-primary">Continuar</button>
+    <a href="{% url 'facturas:buscar_orden' %}" class="btn btn-outline-secondary">Cancelar / nueva búsqueda</a>
+</form>
+{% endblock %}

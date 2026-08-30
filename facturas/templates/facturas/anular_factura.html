@@ -1,0 +1,60 @@
+{% extends 'facturas/base.html' %}
+{% load facturas_extras %}
+{% block titulo %}Anular factura{% endblock %}
+{% block contenido %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card shadow-sm border-danger">
+            <div class="card-body">
+                <h4 class="card-title text-danger mb-3">
+                    ⚠️ Anular factura
+                    {% if liquidacion_activa %}<span class="badge bg-primary">Liquidada</span>{% endif %}
+                </h4>
+
+                {% if liquidacion_activa %}
+                <div class="alert alert-warning small">
+                    🔒 Esta factura ya forma parte de la
+                    <a href="{% url 'facturas:detalle_liquidacion' liquidacion_activa.numero %}">Liquidación #{{ liquidacion_activa.numero }}</a>
+                    y por eso está bloqueada: no se puede anular. Si necesitas hacerlo, primero anula
+                    esa liquidación (eso la libera).
+                </div>
+                {% endif %}
+
+                <table class="table table-sm">
+                    <tr><th>No. Factura</th><td>{{ factura.numfactura }}</td></tr>
+                    <tr><th>Orden</th><td>{{ factura.orden }}</td></tr>
+                    <tr><th>Presupuesto</th><td>{{ factura.codpresup }}</td></tr>
+                    <tr><th>Fecha factura</th><td>{{ factura.fecfactura }}</td></tr>
+                    <tr><th>Fecha recepción</th><td>{{ factura.fecrecep }}</td></tr>
+                    <tr><th>Monto</th><td>Q {{ factura.totalfac|moneyfmt }}</td></tr>
+                </table>
+
+                <div class="alert alert-warning small">
+                    Esto <strong>no borra</strong> el registro: lo marca como anulado
+                    (queda guardado quién, cuándo y por qué). Su monto dejará de
+                    contar contra el saldo de la orden de compra.
+                </div>
+
+                <form method="post" novalidate>
+                    {% csrf_token %}
+                    {% for field in form %}
+                        <div class="mb-3">
+                            <label class="form-label">{{ field.label }}</label>
+                            {{ field }}
+                            {% if field.errors %}
+                                <div class="text-danger small">{{ field.errors|striptags }}</div>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                    <button type="submit" class="btn btn-danger w-100" {% if liquidacion_activa %}disabled{% endif %}>
+                        Confirmar anulación
+                    </button>
+                </form>
+                <a href="{% url 'facturas:listado_facturas_recibidas' %}" class="btn btn-link mt-2">
+                    Cancelar
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

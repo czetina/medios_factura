@@ -1,0 +1,88 @@
+{% extends 'facturas/base.html' %}
+{% load facturas_extras %}
+{% block titulo %}Liquidar clientes{% endblock %}
+{% block contenido %}
+<h4 class="mb-3">Liquidar clientes</h4>
+<p class="text-muted small">
+    Agrupa las facturas ya <strong>Aceptadas</strong> por el criterio que elijas.
+    Guardar un grupo crea una liquidación propia de este sistema — no genera
+    póliza ni movimiento en el sistema contable real.
+</p>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <form method="get" class="row g-3 align-items-end">
+            {% for field in form %}
+                <div class="col-auto">
+                    <label class="form-label">{{ field.label }}</label>
+                    {{ field }}
+                </div>
+            {% endfor %}
+            <div class="col-auto">
+                <button type="submit" class="btn btn-primary">Ver grupos</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if filtrado %}
+    {% if grupos %}
+        {% for grupo in grupos %}
+        <div class="card shadow-sm mb-3">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h5 class="mb-0">{{ form.cleaned_data.criterio|default:'' }} <strong>{{ grupo.valor }}</strong></h5>
+                    <span class="fs-5 fw-bold">Q {{ grupo.total|moneyfmt }}</span>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered mb-2">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Orden</th>
+                                <th>No. Factura</th>
+                                <th>Tipo</th>
+                                <th>Fecha factura</th>
+                                <th class="text-end">Monto</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for f in grupo.facturas %}
+                            <tr class="{% if f.tipofac == 'NC' %}table-warning{% endif %}">
+                                <td>{{ f.orden }}</td>
+                                <td>{{ f.numfactura }}</td>
+                                <td>{{ f.tipofac }}</td>
+                                <td>{{ f.fecfactura }}</td>
+                                <td class="text-end">
+                                    {% if f.tipofac == 'NC' %}-{% endif %}Q {{ f.totalfac|moneyfmt }}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <form method="post" action="{% url 'facturas:guardar_liquidacion' %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="criterio" value="{{ request.GET.criterio }}">
+                    <input type="hidden" name="valor" value="{{ grupo.valor }}">
+                    <input type="hidden" name="anio" value="{{ request.GET.anio }}">
+                    <input type="hidden" name="mes" value="{{ request.GET.mes }}">
+                    <input type="hidden" name="codcli" value="{{ request.GET.codcli }}">
+                    <input type="hidden" name="codpresup" value="{{ request.GET.codpresup }}">
+                    <button type="submit" class="btn btn-success btn-sm">
+                        Guardar liquidación de este grupo ({{ grupo.facturas|length }} factura{{ grupo.facturas|length|pluralize }})
+                    </button>
+                </form>
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="alert alert-info">
+            No hay facturas ACEPTADAS pendientes de liquidar con estos filtros.
+            (Recuerda: solo entran facturas ya marcadas como "Aceptada" en la
+            pantalla de revisión, y que no estén ya en otra liquidación.)
+        </div>
+    {% endif %}
+{% endif %}
+{% endblock %}

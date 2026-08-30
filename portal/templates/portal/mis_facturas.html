@@ -1,0 +1,43 @@
+{% extends 'portal/base_portal.html' %}
+{% load facturas_extras %}
+{% block titulo %}Mis facturas{% endblock %}
+{% block contenido %}
+<h4 class="mb-3">Mis facturas enviadas</h4>
+
+{% if facturas %}
+<div class="table-responsive">
+    <table class="table table-striped table-bordered bg-white align-middle">
+        <thead class="table-dark">
+            <tr>
+                <th>Fecha recepción</th>
+                <th>Orden</th>
+                <th>No. Factura</th>
+                <th>Fecha factura</th>
+                <th class="text-end">Monto</th>
+                <th>Estado</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for f in facturas %}
+            <tr class="{% if f.facanula == 'Si' %}table-secondary{% endif %}">
+                <td>{{ f.fecrecep }}</td>
+                <td>{{ f.orden }}</td>
+                <td>{{ f.numfactura }}</td>
+                <td>{{ f.fecfactura }}</td>
+                <td class="text-end">Q {{ f.totalfac|moneyfmt }}</td>
+                <td>
+                    {% if f.facanula == 'Si' %}
+                        <span class="badge bg-secondary">Anulada</span>
+                    {% else %}
+                        <span class="badge bg-success">Activa</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="alert alert-info">Todavía no has enviado ninguna factura.</div>
+{% endif %}
+{% endblock %}
