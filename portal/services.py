@@ -18,10 +18,53 @@ from django.db import transaction
 from django.utils import timezone
 
 from facturas import services as facturas_services
+from facturas.models import OrdenesRd
 
 from .models import ProveedorInvitacion, ProveedorPerfil
 
 User = get_user_model()
+
+
+class FacturaNoPerteneceAlProveedorError(Exception):
+    """El keyorden no existe, o su codfacturar no coincide con el del
+    proveedor autenticado -- para que un proveedor no pueda anular la
+    factura de otro adivinando/probando un keyorden."""
+
+
+class FacturaYaLiquidadaError(Exception):
+    """La factura ya forma parte de una liquidación activa -- igual que
+    en el sistema interno, no se puede anular hasta que esa liquidación
+    se anule (lo que la libera)."""
+
+
+def anular_factura_del_proveedor(keyorden: int, codfacturar_proveedor: str,
+                                  motivo: str, usuario: str) -> OrdenesRd:
+    """Anula una factura del propio proveedor (mismo candado de
+    seguridad que buscar_orden_para_proveedor: SOLO si su `codfacturar`
+    coincide con el del usuario autenticado) y, con eso, libera de
+    inmediato el saldo de la orden de compra (calcular_saldo_orden ya
+    excluye las facturas anuladas).
+
+    Lanza FacturaNoPerteneceAlProveedorError si el keyorden no existe o
+    no es de este proveedor. Lanza FacturaYaLiquidadaError si ya forma
+    parte de una liquidación activa. Lanza
+    facturas_services.FacturaYaAnuladaError si ya estaba anulada."""
+    propio = (codfacturar_proveedor or '').strip().upper()
+    try:
+        factura = OrdenesRd.objects.using('default').get(keyorden=keyorden)
+    except OrdenesRd.DoesNotExist:
+        raise FacturaNoPerteneceAlProveedorError('Esa factura no existe.')
+
+    if (factura.codfacturar or '').strip().upper() != propio:
+        raise FacturaNoPerteneceAlProveedorError('Esa factura no te pertenece.')
+
+    if facturas_services.liquidacion_activa_de(keyorden):
+        raise FacturaYaLiquidadaError(
+            'Esta factura ya fue incluida en una liquidación y no se puede anular en este momento. '
+            'Contacta a quien administra el sistema.'
+        )
+
+    return facturas_services.anular_factura(keyorden=keyorden, motivo=motivo, usuario=usuario)
 
 
 def buscar_orden_para_proveedor(orden_ingresada: str, codpai: str, codagencia: str,

@@ -12,4 +12,6 @@ urlpatterns = [
     path('ingresar/', views.ingresar_factura, name='ingresar_factura'),
     path('confirmacion/', views.confirmacion, name='confirmacion'),
     path('mis-facturas/', views.mis_facturas, name='mis_facturas'),
+    path('mis-facturas/<int:keyorden>/anular/', views.anular_factura, name='anular_factura'),
+    path('mis-facturas/<int:keyorden>/subir-adjunto/', views.subir_adjunto, name='subir_adjunto'),
 ]

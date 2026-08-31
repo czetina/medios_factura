@@ -9,10 +9,13 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
 
 from facturas import services as facturas_services
-from facturas.models import OrdenesRd
+from facturas.forms import MotivoAnulacionForm
+from facturas.models import FacturaAdjunto, LiquidacionDetalle, OrdenesRd
 
 from . import services
-from .forms import BuscarOrdenPortalForm, FacturaProveedorPortalForm, LoginProveedorForm
+from .forms import (
+    BuscarOrdenPortalForm, FacturaProveedorPortalForm, LoginProveedorForm, SubirAdjuntoPortalForm,
+)
 
 LOGIN_URL = 'portal:login'
 SESSION_ORDEN_SEL = 'portal_orden_seleccionada'
@@ -306,13 +309,138 @@ def mis_facturas(request):
     if perfil is None:
         return _sin_perfil(request)
 
-    facturas = OrdenesRd.objects.using('default').filter(
+    facturas = list(OrdenesRd.objects.using('default').filter(
         codpai=settings.FACTURAS_CODPAI_DEFAULT,
         codagencia=settings.FACTURAS_CODAGENCIA_DEFAULT,
         codfacturar=perfil.codfacturar,
-    ).exclude(facanula='Si').order_by('-fecrecep', '-keyorden')[:200]
+    ).order_by('-fecrecep', '-keyorden')[:200])
+
+    keyordenes = [f.keyorden for f in facturas]
+
+    # order_by('fecha_carga') a propósito: si una factura tiene más de
+    # un adjunto (se reemplazó el archivo), el dict se queda con el más
+    # reciente -- mismo criterio que armar_indice_liquidacion().
+    adjuntos = {
+        fa.keyorden: fa
+        for fa in FacturaAdjunto.objects.filter(
+            keyorden__in=[str(k) for k in keyordenes]
+        ).order_by('fecha_carga')
+    }
+    liquidadas = set(
+        LiquidacionDetalle.objects.filter(
+            keyorden__in=keyordenes, liquidacion__anulada=False,
+        ).values_list('keyorden', flat=True)
+    )
+
+    for f in facturas:
+        f.adjunto = adjuntos.get(str(f.keyorden))
+        f.liquidada = f.keyorden in liquidadas
 
     return render(request, 'portal/mis_facturas.html', {
         'facturas': facturas,
         'perfil': perfil,
     })
+
+
+@login_required(login_url=LOGIN_URL)
+def anular_factura(request, keyorden):
+    """El proveedor anula una factura que él mismo subió (por ejemplo,
+    si se equivocó al ingresarla). Igual que en el sistema interno: no
+    se borra, se marca anulada -- y con eso el saldo de la orden de
+    compra queda disponible de nuevo de inmediato."""
+    perfil = getattr(request.user, 'proveedorperfil', None)
+    if perfil is None:
+        return _sin_perfil(request)
+
+    factura = get_object_or_404(OrdenesRd.objects.using('default'), keyorden=keyorden)
+
+    if (factura.codfacturar or '').strip().upper() != perfil.codfacturar.strip().upper():
+        messages.error(request, 'Esa factura no te pertenece.')
+        return redirect('portal:mis_facturas')
+
+    if factura.facanula == 'Si':
+        messages.info(request, f'La factura {factura.numfactura} ya estaba anulada.')
+        return redirect('portal:mis_facturas')
+
+    liquidacion_activa = facturas_services.liquidacion_activa_de(keyorden)
+
+    if request.method == 'POST' and liquidacion_activa:
+        messages.error(
+            request,
+            'Esta factura ya fue incluida en una liquidación y no se puede anular en este momento. '
+            'Contacta a quien administra el sistema.'
+        )
+        return redirect('portal:mis_facturas')
+
+    if request.method == 'POST':
+        form = MotivoAnulacionForm(request.POST)
+        if form.is_valid():
+            usuario = f'portal:{request.user.username}'
+            try:
+                services.anular_factura_del_proveedor(
+                    keyorden=keyorden,
+                    codfacturar_proveedor=perfil.codfacturar,
+                    motivo=form.cleaned_data['motivo'],
+                    usuario=usuario,
+                )
+            except (services.FacturaNoPerteneceAlProveedorError, services.FacturaYaLiquidadaError) as exc:
+                messages.error(request, str(exc))
+            except facturas_services.FacturaYaAnuladaError as exc:
+                messages.warning(request, str(exc))
+            else:
+                messages.success(
+                    request,
+                    f'Tu factura {factura.numfactura} fue anulada. La orden {factura.orden} '
+                    f'vuelve a tener saldo disponible.'
+                )
+            return redirect('portal:mis_facturas')
+    else:
+        form = MotivoAnulacionForm()
+
+    return render(request, 'portal/anular_factura.html', {
+        'form': form,
+        'factura': factura,
+        'liquidacion_activa': liquidacion_activa,
+    })
+
+
+@login_required(login_url=LOGIN_URL)
+def subir_adjunto(request, keyorden):
+    """Para una factura del proveedor que quedó sin documento (normal
+    en las que se registraron antes de que el archivo fuera
+    obligatorio): sube el archivo directo desde "Mis facturas", sin
+    tocar ningún otro dato de la factura. Solo aplica si todavía no
+    tiene adjunto -- si ya tiene uno, esto no lo reemplaza (para
+    reemplazar un adjunto existente, ese caso lo maneja el equipo
+    interno desde "Revisar factura")."""
+    perfil = getattr(request.user, 'proveedorperfil', None)
+    if perfil is None:
+        return _sin_perfil(request)
+
+    if request.method != 'POST':
+        return redirect('portal:mis_facturas')
+
+    factura = get_object_or_404(OrdenesRd.objects.using('default'), keyorden=keyorden)
+
+    if (factura.codfacturar or '').strip().upper() != perfil.codfacturar.strip().upper():
+        messages.error(request, 'Esa factura no te pertenece.')
+        return redirect('portal:mis_facturas')
+
+    if FacturaAdjunto.objects.filter(keyorden=str(keyorden)).exists():
+        messages.info(request, f'La factura {factura.numfactura} ya tiene un documento adjunto.')
+        return redirect('portal:mis_facturas')
+
+    form = SubirAdjuntoPortalForm(request.POST, request.FILES)
+    if form.is_valid():
+        usuario = f'portal:{request.user.username}'
+        facturas_services.reemplazar_adjunto_factura(
+            keyorden=keyorden,
+            archivo=form.cleaned_data['archivo'],
+            usuario=usuario,
+        )
+        messages.success(request, f'Documento subido para la factura {factura.numfactura}.')
+    else:
+        errores = ' '.join(form.errors.get('archivo', ['No se pudo subir el archivo.']))
+        messages.error(request, errores)
+
+    return redirect('portal:mis_facturas')

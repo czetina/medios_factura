@@ -137,10 +137,13 @@ class OrdenesRd(models.Model):
     f_anula = models.DateField(null=True)
     tipord = models.CharField(max_length=10, null=True)
     obsanula = models.CharField(max_length=255, null=True)
-    usranula = models.CharField(max_length=50, null=True)
-    creusr = models.CharField(max_length=50, null=True)
+    # usranula/codusr: CONFIRMADO por DESCRIBE ordenesrd real = varchar(16)
+    # (no era un supuesto -- ver facturas.services.LARGO_MAX_CODUSR /
+    # _a_codusr(), que trunca cualquier valor antes de guardarlo aquí).
+    usranula = models.CharField(max_length=16, null=True)
+    creusr = models.CharField(max_length=92, null=True)
     fecusr = models.DateTimeField(null=True)
-    codusr = models.CharField(max_length=50, null=True)
+    codusr = models.CharField(max_length=16, null=True)
     stausr = models.CharField(max_length=10, null=True)
 
     class Meta:

@@ -38,6 +38,21 @@ from .models import (
     Liquidacion, LiquidacionDetalle, PresupuestoAdjunto, OrdenCompraAdjunto,
 )
 
+# CONFIRMADO por DESCRIBE ordenesrd real: `codusr` y `usranula` son
+# varchar(16) -- a diferencia de lo que dice el modelo Django
+# (max_length=50, una longitud "razonable" sin confirmar, ver
+# facturas/models.py). El identificador de usuario ("anonimo",
+# "portal:<código de proveedor>", etc.) se trunca a este largo antes de
+# guardarlo en esas dos columnas para no tronar con "Data too long for
+# column" -- `creusr` sí tiene espacio de sobra (varchar(92)) y ahí se
+# guarda completo, sin truncar.
+LARGO_MAX_CODUSR = 16
+
+
+def _a_codusr(usuario: str) -> str:
+    return (usuario or '')[:LARGO_MAX_CODUSR]
+
+
 # -----------------------------------------------------------------------
 # 1. Búsqueda de la orden de compra
 # -----------------------------------------------------------------------
@@ -565,7 +580,7 @@ def registrar_factura(*, orden_dict: dict, numfactura: str, fecfactura, monto: D
         codid=_txt(''),
         creusr=usuario,
         fecusr=timezone.now(),
-        codusr=usuario,
+        codusr=_a_codusr(usuario),
         stausr='Activo',
     )
 
@@ -612,7 +627,7 @@ def anular_factura(keyorden: int, motivo: str, usuario: str) -> OrdenesRd:
     factura.facanula = 'Si'
     factura.f_anula = timezone.localdate()
     factura.obsanula = motivo
-    factura.usranula = usuario
+    factura.usranula = _a_codusr(usuario)
     factura.save(update_fields=['facanula', 'f_anula', 'obsanula', 'usranula'])
 
     return factura
