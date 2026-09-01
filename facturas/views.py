@@ -2,6 +2,7 @@ import datetime
 import hmac
 import os
 import re
+import time
 from decimal import Decimal
 
 from django.conf import settings
@@ -617,16 +618,24 @@ def api_subir_pdf(request):
             codigo = base
         obj, _creado = PresupuestoAdjunto.objects.get_or_create(codpresup=codigo)
 
+    # Borra el archivo anterior si tenía uno DISTINTO nombre (ej. un
+    # presupuesto con una revisión previa, "-0" -> "-1") -- si tuviera
+    # el mismo nombre, ALMACENAMIENTO_SOBRESCRIBIBLE ya se encarga de
+    # eso al guardar. Con reintentos: en Windows, borrar un archivo
+    # justo después de crearlo a veces falla porque el SO todavía lo
+    # tiene bloqueado un instante (antivirus, etc.); si aun así no se
+    # puede, no debe impedir la subida del archivo nuevo -- en el peor
+    # caso queda un archivo viejo huérfano, que no afecta el
+    # funcionamiento.
     if not _creado and obj.archivo:
-        try:
-            obj.archivo.delete(save=False)  # evita dejar huérfano el archivo anterior al reemplazarlo
-        except OSError:
-            # En Windows, borrar un archivo justo después de crearlo a
-            # veces falla porque el SO todavía lo tiene bloqueado un
-            # instante (antivirus, etc.). No debe impedir la subida del
-            # archivo nuevo -- en el peor caso, queda un archivo viejo
-            # huérfano en el storage, que no afecta el funcionamiento.
-            pass
+        for intento in range(3):
+            try:
+                obj.archivo.delete(save=False)
+                break
+            except OSError:
+                if intento == 2:
+                    break
+                time.sleep(0.1)
 
     try:
         obj.archivo.save(nombre, archivo, save=False)
