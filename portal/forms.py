@@ -58,7 +58,8 @@ class FacturaProveedorPortalForm(forms.Form):
     )
     archivo = forms.FileField(
         label='Adjuntar PDF o imagen de tu factura',
-        required=False,
+        required=True,
+        error_messages={'required': 'Debes adjuntar el archivo de tu factura para poder enviarla.'},
         widget=forms.ClearableFileInput(attrs={'class': 'form-control', 'accept': '.pdf,.jpg,.jpeg,.png'}),
     )
     observaciones = forms.CharField(
@@ -74,4 +75,23 @@ class FacturaProveedorPortalForm(forms.Form):
                 raise forms.ValidationError('Solo se permiten archivos PDF, JPG o PNG.')
             if archivo.size > TAMANO_MAX_MB * 1024 * 1024:
                 raise forms.ValidationError(f'El archivo supera el máximo de {TAMANO_MAX_MB} MB.')
+        return archivo
+
+
+class SubirAdjuntoPortalForm(forms.Form):
+    """Para una factura (normalmente antigua, de antes de que el
+    archivo fuera obligatorio) que quedó sin documento adjunto: el
+    proveedor se lo puede subir directamente desde "Mis facturas", sin
+    tener que volver a capturar toda la factura."""
+    archivo = forms.FileField(
+        label='Documento de la factura',
+        error_messages={'required': 'Selecciona el archivo antes de subirlo.'},
+    )
+
+    def clean_archivo(self):
+        archivo = self.cleaned_data['archivo']
+        if archivo.content_type not in ARCHIVOS_PERMITIDOS:
+            raise forms.ValidationError('Solo se permiten archivos PDF, JPG o PNG.')
+        if archivo.size > TAMANO_MAX_MB * 1024 * 1024:
+            raise forms.ValidationError(f'El archivo supera el máximo de {TAMANO_MAX_MB} MB.')
         return archivo

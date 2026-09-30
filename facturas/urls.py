@@ -17,4 +17,5 @@ urlpatterns = [
     path('liquidaciones/<int:numero>/', views.detalle_liquidacion, name='detalle_liquidacion'),
     path('liquidaciones/<int:numero>/pdf/', views.descargar_pdf_liquidacion, name='descargar_pdf_liquidacion'),
     path('liquidaciones/<int:numero>/anular/', views.anular_liquidacion, name='anular_liquidacion'),
+    path('api/subir-pdf/', views.api_subir_pdf, name='api_subir_pdf'),
 ]

@@ -94,9 +94,10 @@ over it. Key functions, in the order a request typically flows through them:
    (`tipofac == 'NC'`) subtract; voided rows (`facanula == 'Si'`) are excluded.
 3. `calcular_impuestos_proporcionales` — (portal only) prorates IVA/TP from the
    order's own IVA/TP ratio, since the supplier portal only captures a total amount.
-4. `numfactura_ya_registrada` — no duplicate invoice numbers per supplier
-   (identified by `codfacturar` — see the "assumption to confirm" note in the
-   docstring; this is a business-rule guess, not confirmed).
+4. `numfactura_ya_registrada` — no duplicate invoice numbers per supplier,
+   identified by `codtipmed`+`codtsubmed`+`codfacturar` concatenated (see
+   `codigo_proveedor()`) — confirmed by the user; `codfacturar` alone is not
+   unique, it can repeat under a different codtipmed/codtsubmed.
 5. `registrar_factura` — the actual `INSERT` into `ordenesrd` (`@transaction.atomic`,
    re-validates the duplicate-number check inside the transaction to close a race
    condition) plus saving the `FacturaAdjunto` file. NOT NULL legacy columns without
@@ -119,12 +120,14 @@ hand back Python `float` instead of `Decimal`, and `Decimal + float` raises.
 
 The entire security guarantee of the supplier portal is one filter:
 `portal/services.py::buscar_orden_para_proveedor` takes the same search results as
-the internal system and keeps only rows where `codfacturar` matches the
-authenticated supplier's own `ProveedorPerfil.codfacturar`. A supplier can never
-choose or type their own `codfacturar` — it always comes from their account, set
-once at invitation-activation time (`activar_invitacion`) and never editable
-afterward. When adding portal views, always filter through this function (or the
-same pattern) rather than calling `facturas_services.buscar_ordenes` directly.
+the internal system and keeps only rows whose provider identity — `codtipmed` +
+`codtsubmed` + `codfacturar` concatenated, via `facturas.services.codigo_proveedor()`
+— matches the authenticated supplier's own `ProveedorPerfil` (same three fields;
+`codfacturar` alone is not unique, see `codigo_proveedor()`'s docstring). A supplier
+can never choose or type their own provider code — it always comes from their
+account, set once at invitation-activation time (`activar_invitacion`) and never
+editable afterward. When adding portal views, always filter through this function
+(or the same pattern) rather than calling `facturas_services.buscar_ordenes` directly.
 
 Invitations are created manually via `/admin/` (no automated email send yet); the
 link is `{PORTAL_BASE_URL}/portal/registro/<token>/`. `/facturas/...` has no login
@@ -143,7 +146,9 @@ monetary display rather than Django's built-in `floatformat`/`intcomma`.
   `ALLOWED_HOSTS='*'` — documented as pre-production TODOs, not oversights.
 - No `@login_required` on `facturas/` views (portal views do require auth).
 - Several business rules are explicitly marked as unconfirmed assumptions in
-  README.md and in code docstrings (e.g. what "proveedor" means for duplicate
-  detection, exact `ordenesrd` column widths/types, whether `orden.totalorden` is
-  really the right balance-cap field). Check the relevant docstring/README section
-  before changing behavior that touches these.
+  README.md and in code docstrings (e.g. exact `ordenesrd` column widths/types,
+  whether `orden.totalorden` is really the right balance-cap field). Check the
+  relevant docstring/README section before changing behavior that touches these.
+  (What "proveedor" means for duplicate detection/security IS confirmed: the
+  concatenation of `codtipmed`+`codtsubmed`+`codfacturar`, see
+  `facturas.services.codigo_proveedor`.)

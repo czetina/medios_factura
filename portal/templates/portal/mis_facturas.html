@@ -14,7 +14,9 @@
                 <th>No. Factura</th>
                 <th>Fecha factura</th>
                 <th class="text-end">Monto</th>
+                <th>Documento</th>
                 <th>Estado</th>
+                <th>Acciones</th>
             </tr>
         </thead>
         <tbody>
@@ -26,10 +28,36 @@
                 <td>{{ f.fecfactura }}</td>
                 <td class="text-end">Q {{ f.totalfac|moneyfmt }}</td>
                 <td>
+                    {% if f.adjunto %}
+                        <a href="{{ f.adjunto.archivo.url }}" target="_blank">Ver documento</a>
+                    {% else %}
+                        <div class="d-flex flex-column gap-1">
+                            <span class="badge bg-danger align-self-start">Sin adjunto</span>
+                            <form method="post" action="{% url 'portal:subir_adjunto' f.keyorden %}"
+                                  enctype="multipart/form-data" class="d-flex gap-1">
+                                {% csrf_token %}
+                                <input type="file" name="archivo" accept=".pdf,.jpg,.jpeg,.png" required
+                                       class="form-control form-control-sm" style="max-width:150px;">
+                                <button type="submit" class="btn btn-outline-warning btn-sm">Subir</button>
+                            </form>
+                        </div>
+                    {% endif %}
+                </td>
+                <td>
                     {% if f.facanula == 'Si' %}
                         <span class="badge bg-secondary">Anulada</span>
                     {% else %}
                         <span class="badge bg-success">Activa</span>
+                    {% endif %}
+                    {% if f.liquidada %}
+                        <span class="badge bg-primary">Liquidada</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if f.facanula != 'Si' and not f.liquidada %}
+                        <a href="{% url 'portal:anular_factura' f.keyorden %}" class="btn btn-outline-danger btn-sm">
+                            Anular
+                        </a>
                     {% endif %}
                 </td>
             </tr>

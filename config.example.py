@@ -52,3 +52,11 @@ CODAGENCIA_DEFAULT = 'PIVOT'
 # desarrollo local déjalo así; cuando se publique, cámbialo al dominio
 # real (ej. 'https://facturas.tuempresa.com').
 PORTAL_BASE_URL = 'http://localhost:8000'
+
+# ---------------------------------------------------------------------
+# 5) Recepción de PDFs desde el sistema legacy (Visual FoxPro)
+# ---------------------------------------------------------------------
+# API key que debe mandar SUBIRPDF.PRG en el header X-API-KEY al subir
+# un PDF de Orden de Compra o Presupuesto. Debe coincidir exactamente
+# con `lcAPIKey` en ese .prg.
+SUBIRPDF_API_KEY = 'CAMBIA_ESTA_LLAVE'

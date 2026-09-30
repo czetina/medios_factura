@@ -24,8 +24,43 @@ SUPUESTOS A VALIDAR CON EL DBA / EQUIPO (marcados también en el README):
 """
 
 import mimetypes
+import time
 
+from django.core.files.storage import FileSystemStorage
 from django.db import models
+
+
+class AlmacenamientoSobrescribible(FileSystemStorage):
+    """Por defecto, si Django encuentra que ya existe un archivo con el
+    nombre que le piden guardar, NO lo sobrescribe: le agrega un sufijo
+    aleatorio al nuevo (ej. "2020115720_BSw0cZk.pdf") para no perder el
+    viejo. Para PresupuestoAdjunto/OrdenCompraAdjunto NO queremos eso:
+    si FoxPro vuelve a subir la misma orden o el mismo presupuesto, el
+    archivo debe reemplazar al anterior en el mismo lugar.
+
+    Se intenta borrar el archivo existente ANTES de guardar el nuevo
+    (con reintentos: en Windows, borrar un archivo justo después de
+    crearlo a veces falla porque el SO todavía lo tiene bloqueado un
+    instante -- antivirus, etc.). Si aun así no se puede borrar, se
+    sigue adelante igual: es mejor dejar un archivo viejo huérfano que
+    duplicar el nuevo con un nombre distinto (que es el bug real que
+    se vio: la "orden.pdf" nunca se actualizaba, quedaba viviendo junto
+    a un "orden_XXXXX.pdf" nuevo que nadie referenciaba)."""
+
+    def get_available_name(self, name, max_length=None):
+        if self.exists(name):
+            for intento in range(3):
+                try:
+                    self.delete(name)
+                    break
+                except OSError:
+                    if intento == 2:
+                        break
+                    time.sleep(0.1)
+        return name
+
+
+ALMACENAMIENTO_SOBRESCRIBIBLE = AlmacenamientoSobrescribible()
 
 
 class Ordenes(models.Model):
@@ -137,10 +172,13 @@ class OrdenesRd(models.Model):
     f_anula = models.DateField(null=True)
     tipord = models.CharField(max_length=10, null=True)
     obsanula = models.CharField(max_length=255, null=True)
-    usranula = models.CharField(max_length=50, null=True)
-    creusr = models.CharField(max_length=50, null=True)
+    # usranula/codusr: CONFIRMADO por DESCRIBE ordenesrd real = varchar(16)
+    # (no era un supuesto -- ver facturas.services.LARGO_MAX_CODUSR /
+    # _a_codusr(), que trunca cualquier valor antes de guardarlo aquí).
+    usranula = models.CharField(max_length=16, null=True)
+    creusr = models.CharField(max_length=92, null=True)
     fecusr = models.DateTimeField(null=True)
-    codusr = models.CharField(max_length=50, null=True)
+    codusr = models.CharField(max_length=16, null=True)
     stausr = models.CharField(max_length=10, null=True)
 
     class Meta:
@@ -188,7 +226,13 @@ class PresupuestoAdjunto(models.Model):
         max_length=20, unique=True, db_index=True,
         help_text='Código del presupuesto (ordenesrd.codpresup / ordenes.codpresup).'
     )
-    archivo = models.FileField(upload_to='presupuestos/%Y/%m/')
+    # Carpeta plana a propósito (sin subcarpetas de año/mes): es la
+    # MISMA carpeta ("presupuestos/", ver
+    # services.CARPETA_PRESUPUESTOS) que lee
+    # sincronizar_adjuntos_desde_carpetas() -- así, sin importar si el
+    # PDF llegó por la API de FoxPro o se dejó ahí a mano, siempre
+    # queda en un único lugar.
+    archivo = models.FileField(upload_to='presupuestos/', storage=ALMACENAMIENTO_SOBRESCRIBIBLE)
     content_type = models.CharField(max_length=100, blank=True)
     tamano_bytes = models.PositiveIntegerField(default=0)
     fecha_carga = models.DateTimeField(auto_now_add=True)
@@ -227,7 +271,11 @@ class OrdenCompraAdjunto(models.Model):
         max_length=20, unique=True, db_index=True,
         help_text='Número de orden de compra (ordenes.orden).'
     )
-    archivo = models.FileField(upload_to='ordenes_compra/%Y/%m/')
+    # Carpeta plana a propósito, y con el mismo nombre ("OrdenesPdf/",
+    # ver services.CARPETA_ORDENES_COMPRA) que lee
+    # sincronizar_adjuntos_desde_carpetas() -- mismo criterio que
+    # PresupuestoAdjunto.archivo, ver ese comentario.
+    archivo = models.FileField(upload_to='OrdenesPdf/', storage=ALMACENAMIENTO_SOBRESCRIBIBLE)
     content_type = models.CharField(max_length=100, blank=True)
     tamano_bytes = models.PositiveIntegerField(default=0)
     fecha_carga = models.DateTimeField(auto_now_add=True)

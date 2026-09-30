@@ -1,21 +1,36 @@
 import datetime
+import hmac
+import os
+import re
+import time
 from decimal import Decimal
 
 from django.conf import settings
 from django.contrib import messages
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
 
 from .forms import (
     BuscarOrdenForm, FacturaProveedorForm, FiltroFacturasRecibidasForm,
     MotivoAnulacionForm, FiltroLiquidacionForm, ReemplazarAdjuntoForm,
 )
-from .models import OrdenesRd, FacturaAdjunto, Liquidacion
+from .models import OrdenesRd, FacturaAdjunto, Liquidacion, OrdenCompraAdjunto, PresupuestoAdjunto
 from . import services
 
 SESSION_RESULTADOS = 'facturas_resultados_busqueda'
 SESSION_ORDEN_SEL = 'facturas_orden_seleccionada'
+
+
+def _url_listado_facturas(volver: str) -> str:
+    """Reconstruye la URL de 'Facturas recibidas' con el querystring de
+    filtros (año/mes/cliente/presupuesto/aceptación) que traía cuando se
+    entró a Revisar/Anular, para que al volver no se pierda el filtro
+    aplicado."""
+    base = reverse('facturas:listado_facturas_recibidas')
+    return f'{base}?{volver}' if volver else base
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +171,7 @@ def ingresar_factura(request):
             # --- Regla de negocio: no repetir no. de factura por proveedor ---
             if services.numfactura_ya_registrada(
                 orden_dict['codpai'], orden_dict['codagencia'],
+                orden_dict.get('codtipmed'), orden_dict.get('codtsubmed'),
                 orden_dict.get('codfacturar'), numfactura,
             ):
                 proveedor = orden_dict.get('rsfacturar') or orden_dict.get('codfacturar') or ''
@@ -252,10 +268,11 @@ def listado_facturas_recibidas(request):
 
 def anular_factura(request, keyorden):
     factura = get_object_or_404(OrdenesRd.objects.using('default'), keyorden=keyorden)
+    volver = request.POST.get('volver', request.GET.get('volver', ''))
 
     if factura.facanula == 'Si':
         messages.info(request, f'La factura {factura.numfactura} ya estaba anulada.')
-        return redirect('facturas:listado_facturas_recibidas')
+        return redirect(_url_listado_facturas(volver))
 
     # Igual que en "Revisar factura": si ya está en una liquidación
     # activa, anularla dejaría el total de esa liquidación
@@ -270,7 +287,8 @@ def anular_factura(request, keyorden):
             f'La factura {factura.numfactura} ya forma parte de la Liquidación #{liquidacion_activa.numero} '
             f'y no se puede anular. Anula esa liquidación primero si necesitas hacerlo.'
         )
-        return redirect('facturas:anular_factura', keyorden=keyorden)
+        return redirect(f"{reverse('facturas:anular_factura', args=[keyorden])}?volver={volver}" if volver
+                         else reverse('facturas:anular_factura', args=[keyorden]))
 
     if request.method == 'POST':
         form = MotivoAnulacionForm(request.POST)
@@ -289,7 +307,7 @@ def anular_factura(request, keyorden):
                     request,
                     f'Factura {factura.numfactura} (orden {factura.orden}) anulada correctamente.'
                 )
-            return redirect('facturas:listado_facturas_recibidas')
+            return redirect(_url_listado_facturas(volver))
     else:
         form = MotivoAnulacionForm()
 
@@ -297,6 +315,7 @@ def anular_factura(request, keyorden):
         'form': form,
         'factura': factura,
         'liquidacion_activa': liquidacion_activa,
+        'volver': volver,
     })
 
 
@@ -324,6 +343,11 @@ def revisar_factura(request, keyorden):
     adjunto = FacturaAdjunto.objects.filter(keyorden=keyorden).order_by('-fecha_carga').first()
     form_adjunto = ReemplazarAdjuntoForm()
     liquidacion_activa = services.liquidacion_activa_de(keyorden)
+    volver = request.POST.get('volver', request.GET.get('volver', ''))
+
+    def _url_revisar():
+        base = reverse('facturas:revisar_factura', args=[keyorden])
+        return f'{base}?volver={volver}' if volver else base
 
     if request.method == 'POST' and liquidacion_activa:
         messages.error(
@@ -331,7 +355,7 @@ def revisar_factura(request, keyorden):
             f'Esta factura ya forma parte de la Liquidación #{liquidacion_activa.numero} '
             f'y no se puede modificar. Anula esa liquidación primero si necesitas cambiarla.'
         )
-        return redirect('facturas:revisar_factura', keyorden=keyorden)
+        return redirect(_url_revisar())
 
     if request.method == 'POST':
         accion = request.POST.get('accion')
@@ -340,11 +364,11 @@ def revisar_factura(request, keyorden):
         if accion == 'aceptar' and not aceptada:
             services.marcar_codificada(keyorden, factura.orden, factura.numfactura, usuario)
             messages.success(request, f'Factura {factura.numfactura} aceptada.')
-            return redirect('facturas:listado_facturas_recibidas')
+            return redirect(_url_listado_facturas(volver))
         elif accion == 'quitar' and aceptada:
             services.quitar_codificacion(keyorden)
             messages.info(request, f'Se quitó la aceptación de la factura {factura.numfactura}.')
-            return redirect('facturas:listado_facturas_recibidas')
+            return redirect(_url_listado_facturas(volver))
         elif accion == 'reemplazar_adjunto':
             # El usuario subió el archivo equivocado: se agrega uno
             # nuevo (no se toca monto/fecha/número -- eso se corrige
@@ -357,7 +381,7 @@ def revisar_factura(request, keyorden):
                     usuario=usuario,
                 )
                 messages.success(request, 'Adjunto reemplazado correctamente.')
-                return redirect('facturas:revisar_factura', keyorden=keyorden)
+                return redirect(_url_revisar())
             # si el form no es válido, sigue abajo y lo vuelve a mostrar con errores
 
     return render(request, 'facturas/revisar_factura.html', {
@@ -366,6 +390,7 @@ def revisar_factura(request, keyorden):
         'adjunto': adjunto,
         'form_adjunto': form_adjunto,
         'liquidacion_activa': liquidacion_activa,
+        'volver': volver,
     })
 
 
@@ -530,3 +555,118 @@ def descargar_pdf_liquidacion(request, numero):
     response = HttpResponse(pdf_bytes, content_type='application/pdf')
     response['Content-Disposition'] = f'inline; filename="Liquidacion_{liquidacion.numero}.pdf"'
     return response
+
+
+# ---------------------------------------------------------------------------
+# API para el sistema legacy (Visual FoxPro): recibe el PDF de una Orden de
+# Compra o un Presupuesto apenas se genera -- reemplaza la necesidad de
+# dejarlos manualmente en media/OrdenesPdf/ o media/presupuestos/ (ver
+# services.sincronizar_adjuntos_desde_carpetas) y evita depender de
+# Google Drive/OneDrive: el propio sistema que ya los genera los empuja
+# aquí directo. Mismo contrato que el prototipo en PHP ya probado por el
+# cliente (upload_pdf.php) para que SUBIRPDF.PRG solo tenga que cambiar
+# la URL y la API key.
+# ---------------------------------------------------------------------------
+
+TIPOS_SUBIRPDF_VALIDOS = {'ORDENESPDF', 'PRESUPUESTO'}
+
+
+def _respuesta_subirpdf(ok, mensaje, status=200, **datos):
+    return JsonResponse({'ok': ok, 'mensaje': mensaje, **datos}, status=status)
+
+
+@csrf_exempt
+@require_POST
+def api_subir_pdf(request):
+    """POST multipart/form-data con:
+      - header X-API-KEY: debe coincidir con settings.FACTURAS_SUBIRPDF_API_KEY.
+      - campo 'tipo': 'ORDENESPDF' o 'PRESUPUESTO'.
+      - campo 'nombre': nombre de archivo tal como lo genera FoxPro
+        (convención ya usada por sincronizar_adjuntos_desde_carpetas():
+        "<numero_de_orden>.pdf" para ORDENESPDF, "<codpresup>-<revisión>.pdf"
+        para PRESUPUESTO).
+      - campo 'file': el PDF.
+
+    Responde JSON {"ok": bool, "mensaje": str, ...}, igual que el
+    prototipo PHP. Exento de CSRF a propósito: es una API llamada por
+    un sistema externo sin sesión de Django -- la autenticación real es
+    la API key, no la cookie de sesión."""
+    api_key = request.headers.get('X-API-KEY', '')
+    if not hmac.compare_digest(settings.FACTURAS_SUBIRPDF_API_KEY, api_key):
+        return _respuesta_subirpdf(False, 'API KEY incorrecta', status=401)
+
+    archivo = request.FILES.get('file')
+    if archivo is None:
+        return _respuesta_subirpdf(False, 'No se recibió el PDF', status=400)
+
+    tipo = (request.POST.get('tipo') or '').strip().upper()
+    if tipo not in TIPOS_SUBIRPDF_VALIDOS:
+        return _respuesta_subirpdf(False, 'Tipo de documento no válido', status=400)
+
+    nombre = (request.POST.get('nombre') or '').strip()
+    if not nombre:
+        return _respuesta_subirpdf(False, 'Falta el nombre del archivo', status=400)
+
+    nombre = os.path.basename(nombre)
+    nombre = re.sub(r'[^A-Za-z0-9_.-]', '_', nombre)
+    if not nombre.lower().endswith('.pdf'):
+        return _respuesta_subirpdf(False, 'El archivo debe ser PDF', status=400)
+
+    if archivo.size <= 0:
+        return _respuesta_subirpdf(False, 'El archivo está vacío', status=400)
+
+    # Verifica el contenido real, no solo la extensión (mismo criterio
+    # que finfo() en el script PHP): un PDF real siempre arranca con
+    # esta cabecera.
+    cabecera = archivo.read(5)
+    archivo.seek(0)
+    if cabecera != b'%PDF-':
+        return _respuesta_subirpdf(False, 'El archivo no es un PDF válido', status=400)
+
+    codigo = os.path.splitext(nombre)[0]
+
+    if tipo == 'ORDENESPDF':
+        obj, _creado = OrdenCompraAdjunto.objects.get_or_create(orden=codigo)
+    else:
+        # Quita el sufijo de revisión ("-0", "-1", ...) SOLO si es de
+        # un solo dígito -- mismo criterio que
+        # sincronizar_adjuntos_desde_carpetas() (el propio codpresup ya
+        # termina en un segmento numérico de varios dígitos).
+        base, _, sufijo = codigo.rpartition('-')
+        if base and len(sufijo) == 1 and sufijo.isdigit():
+            codigo = base
+        obj, _creado = PresupuestoAdjunto.objects.get_or_create(codpresup=codigo)
+
+    # Borra el archivo anterior si tenía uno DISTINTO nombre (ej. un
+    # presupuesto con una revisión previa, "-0" -> "-1") -- si tuviera
+    # el mismo nombre, ALMACENAMIENTO_SOBRESCRIBIBLE ya se encarga de
+    # eso al guardar. Con reintentos: en Windows, borrar un archivo
+    # justo después de crearlo a veces falla porque el SO todavía lo
+    # tiene bloqueado un instante (antivirus, etc.); si aun así no se
+    # puede, no debe impedir la subida del archivo nuevo -- en el peor
+    # caso queda un archivo viejo huérfano, que no afecta el
+    # funcionamiento.
+    if not _creado and obj.archivo:
+        for intento in range(3):
+            try:
+                obj.archivo.delete(save=False)
+                break
+            except OSError:
+                if intento == 2:
+                    break
+                time.sleep(0.1)
+
+    try:
+        obj.archivo.save(nombre, archivo, save=False)
+        obj.usuario = 'foxpro:subirpdf'
+        # content_type='' a propósito (aunque sea un reemplazo y ya
+        # tuviera uno de antes): el save() del modelo solo recalcula
+        # content_type/tamano_bytes cuando content_type viene vacío, así
+        # que forzarlo así es lo que hace que tamano_bytes se actualice
+        # también en un reemplazo, no solo la primera vez.
+        obj.content_type = ''
+        obj.save()
+    except Exception as exc:
+        return _respuesta_subirpdf(False, f'No se pudo guardar el PDF: {exc}', status=500)
+
+    return _respuesta_subirpdf(True, 'PDF recibido correctamente', tipo=tipo, archivo=nombre)
