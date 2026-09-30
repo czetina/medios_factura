@@ -24,6 +24,15 @@ SESSION_RESULTADOS = 'facturas_resultados_busqueda'
 SESSION_ORDEN_SEL = 'facturas_orden_seleccionada'
 
 
+def _url_listado_facturas(volver: str) -> str:
+    """Reconstruye la URL de 'Facturas recibidas' con el querystring de
+    filtros (año/mes/cliente/presupuesto/aceptación) que traía cuando se
+    entró a Revisar/Anular, para que al volver no se pierda el filtro
+    aplicado."""
+    base = reverse('facturas:listado_facturas_recibidas')
+    return f'{base}?{volver}' if volver else base
+
+
 # ---------------------------------------------------------------------------
 # Helpers de (de)serialización para poder guardar los resultados en sesión
 # (Decimal / date no son JSON-serializables por defecto).
@@ -162,6 +171,7 @@ def ingresar_factura(request):
             # --- Regla de negocio: no repetir no. de factura por proveedor ---
             if services.numfactura_ya_registrada(
                 orden_dict['codpai'], orden_dict['codagencia'],
+                orden_dict.get('codtipmed'), orden_dict.get('codtsubmed'),
                 orden_dict.get('codfacturar'), numfactura,
             ):
                 proveedor = orden_dict.get('rsfacturar') or orden_dict.get('codfacturar') or ''
@@ -258,10 +268,11 @@ def listado_facturas_recibidas(request):
 
 def anular_factura(request, keyorden):
     factura = get_object_or_404(OrdenesRd.objects.using('default'), keyorden=keyorden)
+    volver = request.POST.get('volver', request.GET.get('volver', ''))
 
     if factura.facanula == 'Si':
         messages.info(request, f'La factura {factura.numfactura} ya estaba anulada.')
-        return redirect('facturas:listado_facturas_recibidas')
+        return redirect(_url_listado_facturas(volver))
 
     # Igual que en "Revisar factura": si ya está en una liquidación
     # activa, anularla dejaría el total de esa liquidación
@@ -276,7 +287,8 @@ def anular_factura(request, keyorden):
             f'La factura {factura.numfactura} ya forma parte de la Liquidación #{liquidacion_activa.numero} '
             f'y no se puede anular. Anula esa liquidación primero si necesitas hacerlo.'
         )
-        return redirect('facturas:anular_factura', keyorden=keyorden)
+        return redirect(f"{reverse('facturas:anular_factura', args=[keyorden])}?volver={volver}" if volver
+                         else reverse('facturas:anular_factura', args=[keyorden]))
 
     if request.method == 'POST':
         form = MotivoAnulacionForm(request.POST)
@@ -295,7 +307,7 @@ def anular_factura(request, keyorden):
                     request,
                     f'Factura {factura.numfactura} (orden {factura.orden}) anulada correctamente.'
                 )
-            return redirect('facturas:listado_facturas_recibidas')
+            return redirect(_url_listado_facturas(volver))
     else:
         form = MotivoAnulacionForm()
 
@@ -303,6 +315,7 @@ def anular_factura(request, keyorden):
         'form': form,
         'factura': factura,
         'liquidacion_activa': liquidacion_activa,
+        'volver': volver,
     })
 
 
@@ -330,6 +343,11 @@ def revisar_factura(request, keyorden):
     adjunto = FacturaAdjunto.objects.filter(keyorden=keyorden).order_by('-fecha_carga').first()
     form_adjunto = ReemplazarAdjuntoForm()
     liquidacion_activa = services.liquidacion_activa_de(keyorden)
+    volver = request.POST.get('volver', request.GET.get('volver', ''))
+
+    def _url_revisar():
+        base = reverse('facturas:revisar_factura', args=[keyorden])
+        return f'{base}?volver={volver}' if volver else base
 
     if request.method == 'POST' and liquidacion_activa:
         messages.error(
@@ -337,7 +355,7 @@ def revisar_factura(request, keyorden):
             f'Esta factura ya forma parte de la Liquidación #{liquidacion_activa.numero} '
             f'y no se puede modificar. Anula esa liquidación primero si necesitas cambiarla.'
         )
-        return redirect('facturas:revisar_factura', keyorden=keyorden)
+        return redirect(_url_revisar())
 
     if request.method == 'POST':
         accion = request.POST.get('accion')
@@ -346,11 +364,11 @@ def revisar_factura(request, keyorden):
         if accion == 'aceptar' and not aceptada:
             services.marcar_codificada(keyorden, factura.orden, factura.numfactura, usuario)
             messages.success(request, f'Factura {factura.numfactura} aceptada.')
-            return redirect('facturas:listado_facturas_recibidas')
+            return redirect(_url_listado_facturas(volver))
         elif accion == 'quitar' and aceptada:
             services.quitar_codificacion(keyorden)
             messages.info(request, f'Se quitó la aceptación de la factura {factura.numfactura}.')
-            return redirect('facturas:listado_facturas_recibidas')
+            return redirect(_url_listado_facturas(volver))
         elif accion == 'reemplazar_adjunto':
             # El usuario subió el archivo equivocado: se agrega uno
             # nuevo (no se toca monto/fecha/número -- eso se corrige
@@ -363,7 +381,7 @@ def revisar_factura(request, keyorden):
                     usuario=usuario,
                 )
                 messages.success(request, 'Adjunto reemplazado correctamente.')
-                return redirect('facturas:revisar_factura', keyorden=keyorden)
+                return redirect(_url_revisar())
             # si el form no es válido, sigue abajo y lo vuelve a mostrar con errores
 
     return render(request, 'facturas/revisar_factura.html', {
@@ -372,6 +390,7 @@ def revisar_factura(request, keyorden):
         'adjunto': adjunto,
         'form_adjunto': form_adjunto,
         'liquidacion_activa': liquidacion_activa,
+        'volver': volver,
     })
 
 

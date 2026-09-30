@@ -16,7 +16,7 @@
             <div class="d-flex align-items-center gap-2">
                 <span class="text-white small">
                     Código: {{ user.username }}
-                    {% if user.proveedorperfil %} &middot; Proveedor {{ user.proveedorperfil.codfacturar }}{% endif %}
+                    {% if user.proveedorperfil %} &middot; Proveedor {{ user.proveedorperfil.codigo_proveedor }}{% endif %}
                 </span>
                 <a class="btn btn-outline-light btn-sm" href="{% url 'portal:mis_ordenes' %}">Mis órdenes</a>
                 <a class="btn btn-outline-light btn-sm" href="{% url 'portal:mis_facturas' %}">Mis facturas</a>

@@ -37,11 +37,13 @@ Proyecto Django que permite:
    normalmente formatea al revés).
 10. **No se permite repetir el no. de factura por proveedor**: antes de
     guardar, se valida que no exista ya una factura ACTIVA (no anulada)
-    con el mismo número para el mismo proveedor. *** SUPUESTO A
-    CONFIRMAR ***: "proveedor" se identifica aquí con
-    `ordenesrd.codfacturar` (el código del medio que se factura). Si el
-    proveedor real es otro campo, dime cuál y ajusto
-    `facturas/services.py::numfactura_ya_registrada`.
+    con el mismo número para el mismo proveedor. **Confirmado**:
+    "proveedor" se identifica con la combinación
+    `codtipmed`+`codtsubmed`+`codfacturar` (no `codfacturar` solo -- un
+    mismo `codfacturar` puede repetirse bajo otro codtipmed/codtsubmed y
+    ser en realidad otro proveedor). Ver
+    `facturas/services.py::codigo_proveedor` y
+    `::numfactura_ya_registrada`.
 11. **Filtros adicionales en "Facturas recibidas"**: ahora también se
     puede filtrar por Cliente (código, `codcli`) y por Presupuesto
     (`codpresup`), ambos con coincidencia parcial. El filtro de cliente
@@ -103,10 +105,12 @@ UI simplificada encima.
   proveedor** para siempre (no lo puede cambiar ni escribir él mismo).
 - **Seguridad clave**: `portal/services.py::buscar_orden_para_proveedor`
   filtra el resultado de la búsqueda para quedarse SOLO con las
-  órdenes cuyo `codfacturar` sea igual al del proveedor autenticado.
-  Un proveedor no puede ver ni facturar una orden de otro proveedor,
-  aunque adivine o comparta el número de orden — probado con pruebas
-  automatizadas.
+  órdenes cuyo código de proveedor (`codtipmed`+`codtsubmed`+
+  `codfacturar`, ver `facturas/services.py::codigo_proveedor`) sea
+  igual al del proveedor autenticado. Un proveedor no puede ver ni
+  facturar una orden de otro proveedor, aunque adivine o comparta el
+  número de orden, o comparta el mismo `codfacturar` bajo otro
+  codtipmed/codtsubmed.
 - **Solo pide el monto total**: el formulario del proveedor
   (`FacturaProveedorPortalForm`) no tiene campos de IVA ni de otros
   impuestos. `facturas/services.py::calcular_impuestos_proporcionales`

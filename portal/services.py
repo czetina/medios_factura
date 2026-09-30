@@ -19,6 +19,7 @@ from django.utils import timezone
 
 from facturas import services as facturas_services
 from facturas.models import OrdenesRd
+from facturas.services import codigo_proveedor
 
 from .models import ProveedorInvitacion, ProveedorPerfil
 
@@ -37,25 +38,26 @@ class FacturaYaLiquidadaError(Exception):
     se anule (lo que la libera)."""
 
 
-def anular_factura_del_proveedor(keyorden: int, codfacturar_proveedor: str,
-                                  motivo: str, usuario: str) -> OrdenesRd:
+def anular_factura_del_proveedor(keyorden: int, codtipmed_proveedor: str, codtsubmed_proveedor: str,
+                                  codfacturar_proveedor: str, motivo: str, usuario: str) -> OrdenesRd:
     """Anula una factura del propio proveedor (mismo candado de
-    seguridad que buscar_orden_para_proveedor: SOLO si su `codfacturar`
-    coincide con el del usuario autenticado) y, con eso, libera de
-    inmediato el saldo de la orden de compra (calcular_saldo_orden ya
-    excluye las facturas anuladas).
+    seguridad que buscar_orden_para_proveedor: SOLO si su código de
+    proveedor -- codtipmed+codtsubmed+codfacturar -- coincide con el del
+    usuario autenticado) y, con eso, libera de inmediato el saldo de la
+    orden de compra (calcular_saldo_orden ya excluye las facturas
+    anuladas).
 
     Lanza FacturaNoPerteneceAlProveedorError si el keyorden no existe o
     no es de este proveedor. Lanza FacturaYaLiquidadaError si ya forma
     parte de una liquidación activa. Lanza
     facturas_services.FacturaYaAnuladaError si ya estaba anulada."""
-    propio = (codfacturar_proveedor or '').strip().upper()
+    propio = codigo_proveedor(codtipmed_proveedor, codtsubmed_proveedor, codfacturar_proveedor)
     try:
         factura = OrdenesRd.objects.using('default').get(keyorden=keyorden)
     except OrdenesRd.DoesNotExist:
         raise FacturaNoPerteneceAlProveedorError('Esa factura no existe.')
 
-    if (factura.codfacturar or '').strip().upper() != propio:
+    if codigo_proveedor(factura.codtipmed, factura.codtsubmed, factura.codfacturar) != propio:
         raise FacturaNoPerteneceAlProveedorError('Esa factura no te pertenece.')
 
     if facturas_services.liquidacion_activa_de(keyorden):
@@ -68,20 +70,23 @@ def anular_factura_del_proveedor(keyorden: int, codfacturar_proveedor: str,
 
 
 def buscar_orden_para_proveedor(orden_ingresada: str, codpai: str, codagencia: str,
+                                 codtipmed_proveedor: str, codtsubmed_proveedor: str,
                                  codfacturar_proveedor: str) -> list[dict]:
     """Busca la orden (mismo SQL que usa el sistema interno) y luego
-    filtra el resultado para quedarse SOLO con las filas cuyo
-    `codfacturar` sea igual al del proveedor autenticado.
+    filtra el resultado para quedarse SOLO con las filas cuyo código de
+    proveedor (codtipmed+codtsubmed+codfacturar) sea igual al del
+    proveedor autenticado.
 
     Esto es lo que impide que un proveedor vea o facture una orden que
-    no le corresponde, aunque adivine o comparta el número de orden de
-    otro proveedor.
+    no le corresponde, aunque adivine o comparta el número de orden (o
+    el mismo codfacturar bajo otro codtipmed/codtsubmed) de otro
+    proveedor.
     """
     resultados = facturas_services.buscar_ordenes(orden_ingresada, codpai, codagencia)
-    propio = (codfacturar_proveedor or '').strip().upper()
+    propio = codigo_proveedor(codtipmed_proveedor, codtsubmed_proveedor, codfacturar_proveedor)
     return [
         r for r in resultados
-        if (r.get('codfacturar') or '').strip().upper() == propio
+        if codigo_proveedor(r.get('codtipmed'), r.get('codtsubmed'), r.get('codfacturar')) == propio
     ]
 
 
@@ -109,6 +114,8 @@ def activar_invitacion(token, password: str) -> ProveedorPerfil:
     )
     perfil = ProveedorPerfil.objects.create(
         user=user,
+        codtipmed=invitacion.codtipmed,
+        codtsubmed=invitacion.codtsubmed,
         codfacturar=invitacion.codfacturar,
         nombre_proveedor=invitacion.nombre_proveedor,
     )

@@ -64,10 +64,10 @@
                         {% endif %}
                     </td>
                     <td class="d-flex gap-1">
-                        <a href="{% url 'facturas:revisar_factura' f.keyorden %}" class="btn btn-outline-primary btn-sm">
+                        <a href="{% url 'facturas:revisar_factura' f.keyorden %}?volver={{ request.GET.urlencode|urlencode }}" class="btn btn-outline-primary btn-sm">
                             Revisar
                         </a>
-                        <a href="{% url 'facturas:anular_factura' f.keyorden %}" class="btn btn-outline-danger btn-sm">
+                        <a href="{% url 'facturas:anular_factura' f.keyorden %}?volver={{ request.GET.urlencode|urlencode }}" class="btn btn-outline-danger btn-sm">
                             Anular
                         </a>
                     </td>

@@ -53,6 +53,17 @@ def _a_codusr(usuario: str) -> str:
     return (usuario or '')[:LARGO_MAX_CODUSR]
 
 
+def codigo_proveedor(codtipmed: str, codtsubmed: str, codfacturar: str) -> str:
+    """CONFIRMADO por el usuario: el código de proveedor no es
+    `codfacturar` solo -- un mismo `codfacturar` puede repetirse bajo
+    distinto `codtipmed`/`codtsubmed` y en realidad ser otro proveedor
+    (ver el JOIN a `medios` en SQL_BUSCAR_ORDEN_TEMPLATE, que ya usa las
+    tres columnas juntas para identificar el medio). La identidad real
+    del proveedor es la combinación de las tres, concatenada."""
+    partes = (codtipmed, codtsubmed, codfacturar)
+    return '-'.join((p or '').strip().upper() for p in partes)
+
+
 # -----------------------------------------------------------------------
 # 1. Búsqueda de la orden de compra
 # -----------------------------------------------------------------------
@@ -246,14 +257,17 @@ def calcular_saldo_orden(orden_dict: dict) -> SaldoOrden:
 #     el número exacto).
 # -----------------------------------------------------------------------
 
-def listar_ordenes_por_codfacturar(codfacturar: str, codpai: str, codagencia: str,
-                                    anio: int | None = None, orden_filtro: str | None = None,
-                                    solo_con_saldo: bool = True) -> list[dict]:
+def listar_ordenes_por_proveedor(codtipmed: str, codtsubmed: str, codfacturar: str,
+                                  codpai: str, codagencia: str,
+                                  anio: int | None = None, orden_filtro: str | None = None,
+                                  solo_con_saldo: bool = True) -> list[dict]:
     """Lista las órdenes de compra (tabla `ordenes`, vía ORM -- sin el
     JOIN a otro esquema que usa `buscar_ordenes`, así que no trae
     nombres de cliente/marca, solo códigos) que pertenecen a un
-    `codfacturar` dado, opcionalmente filtradas por año de presupuesto
-    (`aniopresup`) y/o por número de orden (coincidencia parcial).
+    proveedor dado (identificado por `codtipmed`+`codtsubmed`+
+    `codfacturar` -- ver codigo_proveedor()), opcionalmente filtradas
+    por año de presupuesto (`aniopresup`) y/o por número de orden
+    (coincidencia parcial).
 
     A cada orden se le agrega `.saldo` (SaldoOrden, ver
     calcular_saldo_orden). Si `solo_con_saldo` es True (default), se
@@ -271,6 +285,8 @@ def listar_ordenes_por_codfacturar(codfacturar: str, codpai: str, codagencia: st
     qs = Ordenes.objects.using('default').filter(
         codpai=codpai,
         codagencia=codagencia,
+        codtipmed=codtipmed,
+        codtsubmed=codtsubmed,
         codfacturar=codfacturar,
         anula='No',
         ordimpresa='Si',
@@ -420,20 +436,22 @@ def liquidacion_activa_de(keyorden: int) -> Liquidacion | None:
 # 2c. Validar que el no. de factura no se repita para el mismo proveedor
 # -----------------------------------------------------------------------
 
-def numfactura_ya_registrada(codpai: str, codagencia: str, codfacturar: str, numfactura: str) -> bool:
+def numfactura_ya_registrada(codpai: str, codagencia: str, codtipmed: str, codtsubmed: str,
+                              codfacturar: str, numfactura: str) -> bool:
     """True si YA existe una factura activa (no anulada) con ese mismo
     número para el mismo proveedor.
 
-    *** SUPUESTO A CONFIRMAR ***
-    "Proveedor" se identifica aquí con `codfacturar` (el código del
-    medio que se está facturando -- lo que en tu pantalla de
-    "Contraseñas de Proveedores" aparece como "Código de proveedor").
-    Si el proveedor real es otro campo/tabla distinta, dime cuál y
-    ajusto este único filtro.
+    CONFIRMADO por el usuario: "proveedor" se identifica con la
+    combinación `codtipmed`+`codtsubmed`+`codfacturar` (ver
+    codigo_proveedor()) -- un mismo `codfacturar` puede repetirse bajo
+    otro codtipmed/codtsubmed y ser en realidad otro proveedor, así que
+    los tres campos se filtran juntos.
     """
     return OrdenesRd.objects.using('default').filter(
         codpai=codpai,
         codagencia=codagencia,
+        codtipmed=codtipmed,
+        codtsubmed=codtsubmed,
         codfacturar=codfacturar,
         numfactura=numfactura,
     ).exclude(facanula='Si').exists()
@@ -513,7 +531,10 @@ def registrar_factura(*, orden_dict: dict, numfactura: str, fecfactura, monto: D
     # revalida dentro de la transacción para evitar condiciones de
     # carrera entre dos registros simultáneos).
     codfacturar = orden_dict.get('codfacturar')
-    if numfactura_ya_registrada(orden_dict['codpai'], orden_dict['codagencia'], codfacturar, numfactura):
+    if numfactura_ya_registrada(
+        orden_dict['codpai'], orden_dict['codagencia'],
+        orden_dict['codtipmed'], orden_dict['codtsubmed'], codfacturar, numfactura,
+    ):
         raise NumeroFacturaDuplicadoError(
             f'Ya existe una factura activa con el número "{numfactura}" para este proveedor.'
         )

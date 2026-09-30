@@ -29,7 +29,7 @@ class ProveedorPerfilForm(forms.ModelForm):
 
     class Meta:
         model = ProveedorPerfil
-        fields = ['codfacturar', 'nombre_proveedor', 'activo']
+        fields = ['codtipmed', 'codtsubmed', 'codfacturar', 'nombre_proveedor', 'activo']
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -78,8 +78,8 @@ class ProveedorPerfilForm(forms.ModelForm):
 @admin.register(ProveedorPerfil)
 class ProveedorPerfilAdmin(admin.ModelAdmin):
     form = ProveedorPerfilForm
-    fields = ('codigo', 'clave', 'codfacturar', 'nombre_proveedor', 'activo')
-    list_display = ('codigo_acceso', 'codfacturar', 'nombre_proveedor', 'activo', 'fecha_registro')
+    fields = ('codigo', 'clave', 'codtipmed', 'codtsubmed', 'codfacturar', 'nombre_proveedor', 'activo')
+    list_display = ('codigo_acceso', 'codtipmed', 'codtsubmed', 'codfacturar', 'nombre_proveedor', 'activo', 'fecha_registro')
     list_filter = ('activo',)
     search_fields = ('user__username', 'codfacturar', 'nombre_proveedor')
 

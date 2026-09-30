@@ -11,6 +11,7 @@ from django.urls import reverse
 from facturas import services as facturas_services
 from facturas.forms import MotivoAnulacionForm
 from facturas.models import FacturaAdjunto, LiquidacionDetalle, OrdenesRd
+from facturas.services import codigo_proveedor
 
 from . import services
 from .forms import (
@@ -116,7 +117,7 @@ def buscar_orden(request):
                 orden_ingresada,
                 settings.FACTURAS_CODPAI_DEFAULT,
                 settings.FACTURAS_CODAGENCIA_DEFAULT,
-                perfil.codfacturar,
+                perfil.codtipmed, perfil.codtsubmed, perfil.codfacturar,
             )
 
             if not resultados:
@@ -164,8 +165,8 @@ def mis_ordenes(request):
             messages.error(request, f'"{anio_str}" no es un año válido.')
             anio_str = ''
 
-    ordenes = facturas_services.listar_ordenes_por_codfacturar(
-        perfil.codfacturar,
+    ordenes = facturas_services.listar_ordenes_por_proveedor(
+        perfil.codtipmed, perfil.codtsubmed, perfil.codfacturar,
         settings.FACTURAS_CODPAI_DEFAULT,
         settings.FACTURAS_CODAGENCIA_DEFAULT,
         anio=anio,
@@ -197,7 +198,7 @@ def seleccionar_orden(request, numero_orden):
         numero_orden,
         settings.FACTURAS_CODPAI_DEFAULT,
         settings.FACTURAS_CODAGENCIA_DEFAULT,
-        perfil.codfacturar,
+        perfil.codtipmed, perfil.codtsubmed, perfil.codfacturar,
     )
     if not resultados:
         messages.error(request, f'No se encontró la orden "{numero_orden}" asociada a tu código de proveedor.')
@@ -226,7 +227,10 @@ def ingresar_factura(request):
 
     # Seguridad: revalidar que la orden en sesión sigue siendo del
     # proveedor autenticado (por si acaso).
-    if (orden_dict.get('codfacturar') or '').strip().upper() != perfil.codfacturar.strip().upper():
+    orden_codigo = codigo_proveedor(
+        orden_dict.get('codtipmed'), orden_dict.get('codtsubmed'), orden_dict.get('codfacturar'),
+    )
+    if orden_codigo != codigo_proveedor(perfil.codtipmed, perfil.codtsubmed, perfil.codfacturar):
         messages.error(request, 'Esta orden no corresponde a tu proveedor.')
         del request.session[SESSION_ORDEN_SEL]
         return redirect('portal:buscar_orden')
@@ -251,6 +255,7 @@ def ingresar_factura(request):
 
             if facturas_services.numfactura_ya_registrada(
                 orden_dict['codpai'], orden_dict['codagencia'],
+                orden_dict.get('codtipmed'), orden_dict.get('codtsubmed'),
                 orden_dict.get('codfacturar'), numfactura,
             ):
                 messages.error(
@@ -312,6 +317,8 @@ def mis_facturas(request):
     facturas = list(OrdenesRd.objects.using('default').filter(
         codpai=settings.FACTURAS_CODPAI_DEFAULT,
         codagencia=settings.FACTURAS_CODAGENCIA_DEFAULT,
+        codtipmed=perfil.codtipmed,
+        codtsubmed=perfil.codtsubmed,
         codfacturar=perfil.codfacturar,
     ).order_by('-fecrecep', '-keyorden')[:200])
 
@@ -354,7 +361,7 @@ def anular_factura(request, keyorden):
 
     factura = get_object_or_404(OrdenesRd.objects.using('default'), keyorden=keyorden)
 
-    if (factura.codfacturar or '').strip().upper() != perfil.codfacturar.strip().upper():
+    if codigo_proveedor(factura.codtipmed, factura.codtsubmed, factura.codfacturar) != codigo_proveedor(perfil.codtipmed, perfil.codtsubmed, perfil.codfacturar):
         messages.error(request, 'Esa factura no te pertenece.')
         return redirect('portal:mis_facturas')
 
@@ -379,6 +386,8 @@ def anular_factura(request, keyorden):
             try:
                 services.anular_factura_del_proveedor(
                     keyorden=keyorden,
+                    codtipmed_proveedor=perfil.codtipmed,
+                    codtsubmed_proveedor=perfil.codtsubmed,
                     codfacturar_proveedor=perfil.codfacturar,
                     motivo=form.cleaned_data['motivo'],
                     usuario=usuario,
@@ -422,7 +431,7 @@ def subir_adjunto(request, keyorden):
 
     factura = get_object_or_404(OrdenesRd.objects.using('default'), keyorden=keyorden)
 
-    if (factura.codfacturar or '').strip().upper() != perfil.codfacturar.strip().upper():
+    if codigo_proveedor(factura.codtipmed, factura.codtsubmed, factura.codfacturar) != codigo_proveedor(perfil.codtipmed, perfil.codtsubmed, perfil.codfacturar):
         messages.error(request, 'Esa factura no te pertenece.')
         return redirect('portal:mis_facturas')
 

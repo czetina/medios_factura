@@ -37,6 +37,7 @@
 
                 <form method="post" novalidate>
                     {% csrf_token %}
+                    <input type="hidden" name="volver" value="{{ volver }}">
                     {% for field in form %}
                         <div class="mb-3">
                             <label class="form-label">{{ field.label }}</label>
@@ -50,7 +51,7 @@
                         Confirmar anulación
                     </button>
                 </form>
-                <a href="{% url 'facturas:listado_facturas_recibidas' %}" class="btn btn-link mt-2">
+                <a href="{% url 'facturas:listado_facturas_recibidas' %}{% if volver %}?{{ volver }}{% endif %}" class="btn btn-link mt-2">
                     Cancelar
                 </a>
             </div>
